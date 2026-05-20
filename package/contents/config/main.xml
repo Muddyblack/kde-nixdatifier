@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+      http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+    <kcfgfile name=""/>
+    <group name="General">
+        <!-- NixOS & Flake -->
+        <entry name="flakePath" type="String">
+            <default></default>
+        </entry>
+        <entry name="checkInterval" type="Int">
+            <default>3600</default>
+        </entry>
+        <entry name="maxGenerations" type="Int">
+            <default>10</default>
+        </entry>
+
+        <!-- Custom Commands -->
+        <entry name="updateCommand" type="String">
+            <default>update</default>
+        </entry>
+        <entry name="redeployCommand" type="String">
+            <default>upnix</default>
+        </entry>
+        <entry name="showCommandButtons" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="commandTerminal" type="String">
+            <default>konsole</default>
+        </entry>
+
+        <!-- Rollback / Auth -->
+        <entry name="usePkexec" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="confirmBeforeRollback" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="showDeleteButton" type="Bool">
+            <default>false</default>
+        </entry>
+
+        <!-- Notifications -->
+        <entry name="showNotifications" type="Bool">
+            <default>true</default>
+        </entry>
+
+        <!-- Behaviour -->
+        <entry name="autoRefreshOnOpen" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="showFlakeSection" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="diffFilterEnabled" type="Bool">
+            <default>true</default>
+        </entry>
+
+        <!-- Appearance -->
+        <entry name="timelineColor" type="String">
+            <default>#9b5de5</default>
+        </entry>
+        <entry name="fontScale" type="Double">
+            <default>1.0</default>
+        </entry>
+        <entry name="showBg" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="bgColor" type="String">
+            <default>#d90d0f1a</default>
+        </entry>
+        <entry name="bgRadius" type="Double">
+            <default>12.0</default>
+        </entry>
+        <entry name="useSystemTextColor" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="customTextColor" type="String">
+            <default>#ffffff</default>
+        </entry>
+
+        <!-- Compact panel icon style: "icon", "number", "both" -->
+        <entry name="compactStyle" type="String">
+            <default>icon</default>
+        </entry>
+        <entry name="compactShowBadge" type="Bool">
+            <default>true</default>
+        </entry>
+    </group>
+</kcfg>
