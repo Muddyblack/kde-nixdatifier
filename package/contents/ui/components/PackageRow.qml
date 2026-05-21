@@ -1,0 +1,381 @@
+import QtQuick 2.15
+import QtQuick.Layouts 1.15
+import QtQuick.Controls 2.15
+import org.kde.kirigami as Kirigami
+
+// Single expandable package diff row.
+// Used in both GenerationDelegate (timeline) and the Diff tab.
+Item {
+    id: root
+
+    property var pkg: ({})     // { name, type, oldVersion, newVersion, size }
+    property color accentColor: "transparent"
+    property color textColor: "white"
+    property real fs: 1.0
+
+    // When true the detail panel is always open (detailed mode);
+    // when false the user toggles it by clicking the row (compact mode).
+    property bool forceExpanded: false
+    property var iconCache: ({})
+    property bool showPackageIcons: true
+
+    signal copyRequested(string text)
+
+    // Theme-aware font sizing. Legacy hardcoded sizes were tuned against a 9px base.
+    readonly property int baseFontPx: Kirigami.Theme.smallFont.pixelSize
+    function fpx(n) {
+        return Math.max(1, Math.round(n / 9.0 * baseFontPx * fs));
+    }
+
+    readonly property string resolvedIcon: {
+        if (!showPackageIcons || !pkgName)
+            return "";
+        const ic = iconCache[pkgName];
+        return (ic !== undefined && ic !== "") ? ic : "";
+    }
+
+    // ── Internal ──────────────────────────────────────────────────────────────
+    property bool _userExpanded: false
+    readonly property bool isOpen: forceExpanded || _userExpanded
+
+    // Safe accessors — guard against the brief window where pkg is ({})
+    readonly property string pkgName: pkg ? (pkg.name || "") : ""
+    readonly property string pkgType: pkg ? (pkg.type || "") : ""
+    readonly property string pkgOldVersion: pkg ? (pkg.oldVersion || "") : ""
+    readonly property string pkgNewVersion: pkg ? (pkg.newVersion || "") : ""
+    readonly property string pkgSize: pkg ? (pkg.size || "").replace(/KiB/g, "KB").replace(/MiB/g, "MB").replace(/GiB/g, "GB") : ""
+
+    function svg(name) {
+        return Qt.resolvedUrl("../assets/" + name + ".svg");
+    }
+
+    property color sigil: pkg && pkg.type === "added" ? "#3ddc84" : pkg && pkg.type === "removed" ? "#ff6b6b" : "#ffb74d"
+
+    height: isOpen ? 22 + detailPanel.implicitHeight + 6 : 22
+    Behavior on height {
+        NumberAnimation {
+            duration: 170
+            easing.type: Easing.InOutQuad
+        }
+    }
+
+    // ── Compact row ───────────────────────────────────────────────────────────
+    Rectangle {
+        id: rowBg
+        anchors {
+            left: parent.left
+            right: parent.right
+            top: parent.top
+        }
+        height: 22
+        radius: 3
+        color: rowMa.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
+        Behavior on color {
+            ColorAnimation {
+                duration: 80
+            }
+        }
+
+        RowLayout {
+            anchors {
+                fill: parent
+                leftMargin: 5
+                rightMargin: 5
+            }
+            spacing: 5
+
+            // Sigil +/−/~
+            Text {
+                text: root.pkgType === "added" ? "+" : (root.pkgType === "removed" ? "−" : "~")
+                color: root.sigil
+                font.pixelSize: root.fpx(11)
+                font.bold: true
+                Layout.minimumWidth: 12
+            }
+
+            // Package icon — system app icon when available, generic fallback
+            Kirigami.Icon {
+                readonly property bool hasAppIcon: root.showPackageIcons && root.resolvedIcon !== ""
+                source: hasAppIcon ? root.resolvedIcon : root.svg("ic_package_added")
+                implicitWidth: hasAppIcon ? 16 : 12
+                implicitHeight: hasAppIcon ? 16 : 12
+                isMask: !hasAppIcon
+                color: hasAppIcon ? "transparent" : root.sigil
+                opacity: hasAppIcon ? 1.0 : 0.65
+                smooth: true
+            }
+
+            // Name
+            Text {
+                text: root.pkgName
+                color: root.textColor
+                font.pixelSize: root.fpx(9)
+                font.bold: true
+                elide: Text.ElideRight
+                Layout.fillWidth: true
+            }
+
+            // Version
+            Text {
+                text: root.pkgType === "added" ? root.pkgNewVersion : root.pkgType === "removed" ? root.pkgOldVersion : root.pkgOldVersion + " → " + root.pkgNewVersion
+                color: root.textColor
+                opacity: 0.55
+                font.pixelSize: root.fpx(8)
+                font.family: Kirigami.Theme.fixedWidthFont.family
+                elide: Text.ElideRight
+                Layout.preferredWidth: 155
+                Layout.maximumWidth: 175
+                horizontalAlignment: Text.AlignRight
+            }
+
+            // Size delta
+            Text {
+                visible: root.pkgSize !== ""
+                text: root.pkgSize
+                color: root.sigil
+                opacity: 0.80
+                font.pixelSize: root.fpx(7.5)
+                font.family: Kirigami.Theme.fixedWidthFont.family
+                Layout.preferredWidth: 62
+                Layout.maximumWidth: 72
+                horizontalAlignment: Text.AlignRight
+                elide: Text.ElideRight
+            }
+
+            // Chevron (only in compact mode)
+            Kirigami.Icon {
+                visible: !root.forceExpanded
+                source: root.isOpen ? root.svg("ic_chevron_up") : root.svg("ic_chevron_down")
+                implicitWidth: 11
+                implicitHeight: 11
+                isMask: true
+                color: root.textColor
+                opacity: rowMa.containsMouse ? 0.65 : 0.20
+                Behavior on opacity {
+                    NumberAnimation {
+                        duration: 100
+                    }
+                }
+            }
+        }
+
+        MouseArea {
+            id: rowMa
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            enabled: !root.forceExpanded
+            onClicked: root._userExpanded = !root._userExpanded
+        }
+    }
+
+    // ── Detail panel ──────────────────────────────────────────────────────────
+    Rectangle {
+        id: detailPanel
+        anchors {
+            left: parent.left
+            right: parent.right
+            top: rowBg.bottom
+            topMargin: 2
+            leftMargin: 18
+        }
+        visible: root.isOpen
+        implicitHeight: detailCol.implicitHeight + 12
+        radius: 5
+        color: Qt.rgba(root.sigil.r, root.sigil.g, root.sigil.b, 0.06)
+        border.color: Qt.rgba(root.sigil.r, root.sigil.g, root.sigil.b, 0.22)
+        border.width: 1
+
+        ColumnLayout {
+            id: detailCol
+            anchors {
+                left: parent.left
+                right: parent.right
+                top: parent.top
+                margins: 8
+            }
+            spacing: 5
+
+            // Version row — upgrade
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.pkgType !== "added" && root.pkgType !== "removed" && root.pkgOldVersion !== "" && root.pkgNewVersion !== ""
+                Text {
+                    text: i18n("Version")
+                    color: root.textColor
+                    opacity: 0.38
+                    font.pixelSize: root.fpx(8)
+                    Layout.minimumWidth: 65
+                }
+                Text {
+                    text: root.pkgOldVersion + "  →  " + root.pkgNewVersion
+                    color: root.textColor
+                    opacity: 0.92
+                    font.pixelSize: root.fpx(8.5)
+                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.bold: true
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                }
+            }
+
+            // Version row — added
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.pkgType === "added" && root.pkgNewVersion !== ""
+                Text {
+                    text: i18n("Version")
+                    color: root.textColor
+                    opacity: 0.38
+                    font.pixelSize: root.fpx(8)
+                    Layout.minimumWidth: 65
+                }
+                Text {
+                    text: root.pkgNewVersion
+                    color: root.sigil
+                    opacity: 0.92
+                    font.pixelSize: root.fpx(8.5)
+                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.bold: true
+                }
+            }
+
+            // Version row — removed
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.pkgType === "removed" && root.pkgOldVersion !== ""
+                Text {
+                    text: i18n("Version")
+                    color: root.textColor
+                    opacity: 0.38
+                    font.pixelSize: root.fpx(8)
+                    Layout.minimumWidth: 65
+                }
+                Text {
+                    text: root.pkgOldVersion
+                    color: root.sigil
+                    opacity: 0.92
+                    font.pixelSize: root.fpx(8.5)
+                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.bold: true
+                }
+            }
+
+            // Size delta
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                visible: root.pkgSize !== ""
+                Text {
+                    text: i18n("Size delta")
+                    color: root.textColor
+                    opacity: 0.38
+                    font.pixelSize: root.fpx(8)
+                    Layout.minimumWidth: 65
+                }
+                Text {
+                    text: root.pkgSize
+                    color: root.sigil
+                    opacity: 0.92
+                    font.pixelSize: root.fpx(8.5)
+                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.bold: true
+                }
+            }
+
+            // Store path + copy
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                Text {
+                    text: i18n("Store path")
+                    color: root.textColor
+                    opacity: 0.38
+                    font.pixelSize: root.fpx(8)
+                    Layout.minimumWidth: 65
+                }
+                Text {
+                    id: storePath
+                    readonly property string ver: root.pkgType === "removed" ? root.pkgOldVersion : root.pkgNewVersion
+                    text: "/nix/store/…-" + root.pkgName + "-" + ver
+                    color: root.textColor
+                    opacity: 0.60
+                    font.pixelSize: root.fpx(7.5)
+                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    elide: Text.ElideMiddle
+                    Layout.fillWidth: true
+                }
+                Rectangle {
+                    width: 20
+                    height: 17
+                    radius: 4
+                    color: copyMa.containsMouse ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.04)
+                    border.color: Qt.rgba(1, 1, 1, 0.14)
+                    border.width: 1
+                    Behavior on color {
+                        ColorAnimation {
+                            duration: 100
+                        }
+                    }
+                    Kirigami.Icon {
+                        anchors.centerIn: parent
+                        source: root.svg("ic_copy")
+                        implicitWidth: 10
+                        implicitHeight: 10
+                        isMask: true
+                        color: root.textColor
+                        opacity: 0.60
+                    }
+                    MouseArea {
+                        id: copyMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.copyRequested(storePath.text)
+                        ToolTip.text: i18n("Copy store path")
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 400
+                    }
+                }
+            }
+
+            // nixpkgs GitHub search link
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                readonly property string ghUrl: "https://github.com/NixOS/nixpkgs/search?q=" + encodeURIComponent(root.pkgName)
+                Text {
+                    text: "nixpkgs"
+                    color: root.textColor
+                    opacity: 0.38
+                    font.pixelSize: root.fpx(8)
+                    Layout.minimumWidth: 65
+                }
+                Text {
+                    text: "github.com/NixOS/nixpkgs  ↗"
+                    color: root.accentColor
+                    opacity: ghMa.containsMouse ? 1.0 : 0.72
+                    font.pixelSize: root.fpx(8)
+                    Behavior on opacity {
+                        NumberAnimation {
+                            duration: 100
+                        }
+                    }
+                    MouseArea {
+                        id: ghMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: Qt.openUrlExternally(parent.parent.ghUrl)
+                        ToolTip.text: parent.parent.ghUrl
+                        ToolTip.visible: containsMouse
+                        ToolTip.delay: 400
+                    }
+                }
+            }
+        }
+    }
+}

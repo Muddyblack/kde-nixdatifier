@@ -5,79 +5,171 @@ import org.kde.plasma.plasmoid
 import org.kde.plasma.plasma5support as P5Support
 import org.kde.kirigami as Kirigami
 
+import "components"
+
 PlasmoidItem {
     id: root
 
     // ── Size hints ────────────────────────────────────────────────────────────
-    Layout.minimumWidth:   300
-    Layout.preferredWidth: 440
-    Layout.minimumHeight:  320
-    Layout.preferredHeight: 560
+    Layout.minimumWidth: 360
+    Layout.preferredWidth: plasmoid.configuration.popupWidth
+    Layout.minimumHeight: 340
+    Layout.preferredHeight: plasmoid.configuration.popupHeight
 
-    Plasmoid.backgroundHints: plasmoid.configuration.showBg ? Plasmoid.NoBackground : Plasmoid.DefaultBackground
+    Plasmoid.backgroundHints: plasmoid.configuration.showBg ? "NoBackground" : "DefaultBackground"
+    property bool pinned: false
+    hideOnWindowDeactivate: !pinned
 
-    // ── Theme / Config aliases ─────────────────────────────────────────────
-    readonly property color accentColor:    Kirigami.Theme.highlightColor
-    readonly property color timelineColor:  plasmoid.configuration.timelineColor || "#9b5de5"
-    readonly property color textColor:      plasmoid.configuration.useSystemTextColor
-                                                ? Kirigami.Theme.textColor
-                                                : (plasmoid.configuration.customTextColor || "#ffffff")
-    readonly property string flakePath:     plasmoid.configuration.flakePath || ""
-    readonly property real   fs:            plasmoid.configuration.fontScale || 1.0
-    readonly property string updateCmd:     plasmoid.configuration.updateCommand || "update"
-    readonly property string redeployCmd:   plasmoid.configuration.redeployCommand || "upnix"
-    readonly property string terminalApp:   plasmoid.configuration.commandTerminal || "konsole"
+    // Save popup size when it closes so it reopens at the same dimensions
+    property int _lastWidth: 0
+    property int _lastHeight: 0
 
-    // ── State ────────────────────────────────────────────────────────────────
-    property var    generations:      []
-    property string activeStorePath:  ""
-    property string bootedStorePath:  ""
-    property int    activeGenNum:     -1
-    property int    bootedGenNum:     -1
-    property int    selectedGenNum:   -1
-    property bool   isLoadingGens:    false
-    property bool   isLoadingDetails: false
-    property bool   isBusy:           false        // rollback / delete in progress
-    property var    detailsCache:     ({})
-    property string diffFilter:       ""
-    property string diffMode:         "booted" // "booted" | "prev"
+    onWidthChanged: if (expanded) {
+        _lastWidth = width;
+        _lastHeight = height;
+    }
+    onHeightChanged: if (expanded) {
+        _lastWidth = width;
+        _lastHeight = height;
+    }
 
-    property var    flakeUpdates:        []
-    property bool   isCheckingFlake:     false
-    property string lastFlakeCheckTime:  ""
+    // ── Script directory ──────────────────────────────────────────────────────
+    readonly property string scriptDir: Qt.resolvedUrl("../tools/sh/").toString().replace("file://", "")
 
-    // pending rollback / delete action for confirmation dialog
-    property int    pendingGenNum:  -1
-    property string pendingAction:  ""   // "rollback" | "delete"
+    // ── Theme / Config aliases ────────────────────────────────────────────────
+    readonly property color accentColor: plasmoid.configuration.accentColor || Kirigami.Theme.highlightColor
+    readonly property color timelineColor: plasmoid.configuration.timelineColor || "#9b5de5"
+    readonly property color textColor: plasmoid.configuration.useSystemTextColor ? Kirigami.Theme.textColor : (plasmoid.configuration.customTextColor || "#ffffff")
+    readonly property string flakePath: plasmoid.configuration.flakePath || ""
+    readonly property real fs: plasmoid.configuration.fontScale || 1.0
+    readonly property var customCommands: {
+        try {
+            return JSON.parse(plasmoid.configuration.customCommands || "[]");
+        } catch (e) {
+            return [];
+        }
+    }
+    // Empty string = auto-detect from KDE/XDG defaults in the terminal script
+    readonly property string terminalApp: plasmoid.configuration.commandTerminal || ""
+    readonly property string iconStyle: plasmoid.configuration.iconStyle || "colored"
 
-    // ── Toast notification queue ──────────────────────────────────────────────
+    // ── Generations state ─────────────────────────────────────────────────────
+    property var generations: []
+    property string activeStorePath: ""
+    property string bootedStorePath: ""
+    property int activeGenNum: -1
+    property int bootedGenNum: -1
+    property int selectedGenNum: -1
+    property bool isLoadingGens: false
+    property bool isLoadingDetails: false
+    property bool isBusy: false
+    property var detailsCache: ({})
+    property string diffFilter: ""
+    property string diffMode: "booted"
+
+    // Cache of pairwise diffs for the Diff tab: key "A_B" -> { diff: [...] }
+    property var pairDiffCache: ({})
+    property bool isLoadingPairDiff: false
+    property int pairDiffA: -1
+    property int pairDiffB: -1
+
+    // Icon cache: pkgName -> icon string (system theme name or "")
+    property var iconCache: ({})
+
+    // ── Action tracking (exposed to FullView for busy bar text) ───────────────
+    property string currentActionType: ""
+    property int currentActionGenNum: -1
+
+    // ── Flake state ───────────────────────────────────────────────────────────
+    property var flakeUpdates: []
+    property bool isCheckingFlake: false
+    property string lastFlakeCheckTime: ""
+
+    // ── System info ───────────────────────────────────────────────────────────
+    property string hostname: ""
+    property string nixosVersion: ""
+    property string lastActivationTime: ""
+    property string uptime: ""
+
+    // ── Disk usage state ──────────────────────────────────────────────────────
+    // All values in bytes (0 = unknown).
+    property real diskStoreBytes: 0
+    property real diskReclaimableBytes: 0
+    property real diskFreeBytes: 0
+
+    // ── Secrets state ─────────────────────────────────────────────────────────
+    // deployedSecrets: live decrypted secrets (e.g. /run/secrets, auto-detected)
+    // sourceSecrets:   encrypted source file (e.g. secrets.yaml in the flake repo)
+    property var deployedSecrets: ({
+            path: "",
+            exists: false,
+            lastModified: "",
+            freshness: "",
+            fileCount: 0,
+            names: [],
+            encKind: "",
+            sopsVersion: "",
+            recipientCount: 0,
+            encType: ""
+        })
+    property var sourceSecrets: ({
+            path: "",
+            exists: false,
+            lastModified: "",
+            freshness: "",
+            fileCount: 0,
+            names: [],
+            encKind: "",
+            sopsVersion: "",
+            recipientCount: 0,
+            encType: ""
+        })
+
+    // Legacy alias so any remaining sopsStatus references still compile
+    property var sopsStatus: deployedSecrets
+
+    // ── Hash tool state ───────────────────────────────────────────────────────
+    property var hashResult: null   // { value: string, isError: bool } | null
+
+    // ── Pending confirmation ──────────────────────────────────────────────────
+    property int pendingGenNum: -1
+    property string pendingAction: ""
+
+    // ── View state ────────────────────────────────────────────────────────────
+    property string activeViewMode: plasmoid.configuration.defaultView || "timeline"
+
+    // ── Toast queue ───────────────────────────────────────────────────────────
     property var toasts: []
 
     function pushToast(message, isError) {
-        var arr = root.toasts.slice()
-        arr.push({ msg: message, err: isError || false, id: Date.now() })
-        root.toasts = arr
-        toastDismissTimer.restart()
+        var arr = root.toasts.slice();
+        arr.push({
+            msg: message,
+            err: isError || false,
+            id: Date.now()
+        });
+        root.toasts = arr;
+        toastTimer.restart();
     }
 
     Timer {
-        id: toastDismissTimer
+        id: toastTimer
         interval: 5000
         repeat: false
         onTriggered: {
-            if (root.toasts.length === 0) return
-            var arr = root.toasts.slice()
-            // Drop only the first non-error toast; errors stay until manually closed
-            var idx = -1
+            var arr = root.toasts.slice();
             for (var i = 0; i < arr.length; i++) {
-                if (!arr[i].err) { idx = i; break }
+                if (!arr[i].err) {
+                    arr.splice(i, 1);
+                    break;
+                }
             }
-            if (idx === -1) return
-            arr.splice(idx, 1)
-            root.toasts = arr
-            // Keep ticking if there are more non-error toasts to clear
+            root.toasts = arr;
             for (var j = 0; j < arr.length; j++) {
-                if (!arr[j].err) { restart(); return }
+                if (!arr[j].err) {
+                    restart();
+                    return;
+                }
             }
         }
     }
@@ -88,482 +180,639 @@ PlasmoidItem {
     }
 
     function copyToClipboard(text) {
-        clipboardHelper.text = text
-        clipboardHelper.selectAll()
-        clipboardHelper.copy()
-        root.pushToast(i18n("Copied error to clipboard"), false)
+        clipboardHelper.text = text;
+        clipboardHelper.selectAll();
+        clipboardHelper.copy();
+        root.pushToast(i18n("Copied to clipboard"), false);
     }
 
-    // ── DataSources ──────────────────────────────────────────────────────────
-    P5Support.DataSource {
-        id: gensSource
-        engine: "executable"
-        connectedSources: []
-        onNewData: function(sourceName, data) {
-            root.isLoadingGens = false
-            gensSource.disconnectSource(sourceName)
-            // We always exit 0, so treat empty stdout as "not found"
-            const out = (data["stdout"] || "").trim()
-            if (!out) {
-                root.pushToast(i18n("No generations found — is /nix/var/nix/profiles/ accessible?"), true)
-                return
-            }
-            root.parseGenerations(out)
+    // Desktop notification — survives popup close. Respects user's preference.
+    // Uses notify-send (xdg-compatible) and an appropriate themed icon.
+    function notify(title, body, isError) {
+        if (!plasmoid.configuration.showNotifications)
+            return;
+        const icon = isError ? "dialog-error" : "system-software-update";
+        // shell-escape single quotes
+        const t = (title || "").replace(/'/g, "'\\''");
+        const b = (body || "").replace(/'/g, "'\\''");
+        sh("notify-send -i " + icon + " '" + t + "' '" + b + "'", null);
+    }
+
+    // Human-readable byte formatter — used for closure size + disk usage chips.
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0)
+            return "";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0, v = bytes;
+        while (v >= 1024 && i < units.length - 1) {
+            v /= 1024;
+            i++;
         }
+        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
     }
 
-    P5Support.DataSource {
-        id: detailsSource
-        engine: "executable"
-        connectedSources: []
-        property int queryGenNum: -1
-        onNewData: function(sourceName, data) {
-            root.isLoadingDetails = false
-            detailsSource.disconnectSource(sourceName)
-            // We always exit 0; any real failure shows up as empty/garbled output
-            root.parseDetails(queryGenNum, data["stdout"] || "")
+    // ── Shell helper ──────────────────────────────────────────────────────────
+    // Creates a fresh Shell.qml instance, runs cmd, calls cb(cmd,out,err,code), auto-cleans up.
+    function sh(cmd, cb) {
+        const c = Qt.createComponent("components/Shell.qml");
+        if (c.status !== Component.Ready) {
+            pushToast(i18n("Shell component error: %1").arg(c.errorString()), true);
+            return;
         }
+        const obj = c.createObject(root);
+        obj.exec(cmd, cb);
     }
 
-    P5Support.DataSource {
-        id: actionSource
-        engine: "executable"
-        connectedSources: []
-        property string actionType: ""
-        property int    actionGenNum: -1
-        onNewData: function(sourceName, data) {
-            root.isBusy = false
-            actionSource.disconnectSource(sourceName)
-            if (data["exitCode"] !== 0) {
-                var errMsg = (data["stderr"] || data["stdout"] || "").trim()
-                if (actionType === "rollback") {
-                    root.pushToast(i18n("Rollback failed: ") + errMsg, true)
-                } else {
-                    root.pushToast(i18n("Delete failed: ") + errMsg, true)
-                }
-                return
-            }
-            if (actionType === "rollback") {
-                root.pushToast(i18n("Generation %1 marked for next boot. Reboot to activate.").arg(actionGenNum), false)
-            } else {
-                root.pushToast(i18n("Generation %1 deleted.").arg(actionGenNum), false)
-                // Deselect if we deleted the selected one
-                if (root.selectedGenNum === actionGenNum) root.selectedGenNum = -1
-            }
-            root.refreshGenerations()
-        }
-    }
+    // ── Operations ────────────────────────────────────────────────────────────
 
-    // ── Command runner (update / redeploy) ─────────────────────────────────
-    P5Support.DataSource {
-        id: commandSource
-        engine: "executable"
-        connectedSources: []
-        property string commandLabel: ""
-        onNewData: function(sourceName, data) {
-            commandSource.disconnectSource(sourceName)
-            // terminal launched in background – nothing to parse
-        }
-    }
-
-    function runCustomCommand(cmd, label) {
-        // Launch in a terminal window. We try to stay compatible with
-        // konsole, kitty, alacritty, foot, xterm, etc.
-        // Strategy: <terminal> --hold -e bash -c '<cmd>'
-        // For konsole we need  -e  without --hold (konsole keeps window open with -e)
-        const workDir = (root.flakePath !== "") ? root.flakePath : "~"
-        const term = root.terminalApp
-        let shellCmd
-        if (term === "konsole" || term === "konsole-nkde") {
-            shellCmd = term + " --workdir " + workDir + " -e bash -c '" + cmd + "; echo; echo \"--- done ---\"; read -n1'"
-        } else if (term === "kitty" || term === "foot" || term === "wezterm") {
-            shellCmd = term + " bash -c 'cd " + workDir + " && " + cmd + "; echo; echo \"--- done ---\"; read -n1'"
-        } else {
-            shellCmd = term + " --hold -e bash -c 'cd " + workDir + " && " + cmd + "'"
-        }
-        commandSource.commandLabel = label
-        commandSource.connectSource("sh -c \"" + shellCmd.replace(/"/g, '\\"') + " &\"")
-        root.pushToast(i18n("Launching: %1").arg(label), false)
-    }
-
-    // Stage 1: read local flake.lock
-    P5Support.DataSource {
-        id: flakeLockSource
-        engine: "executable"
-        connectedSources: []
-        onNewData: function(sourceName, data) {
-            flakeLockSource.disconnectSource(sourceName)
-            const text = (data["stdout"] || "").trim()
-            if (!text) {
-                root.isCheckingFlake = false
-                root.pushToast(i18n("Could not read flake.lock at %1").arg(root.flakePath), true)
-                return
-            }
-            root.startRemoteProbe(text)
-        }
-    }
-
-    // Stage 2: probe remote refs via git ls-remote
-    P5Support.DataSource {
-        id: flakeRemoteSource
-        engine: "executable"
-        connectedSources: []
-        onNewData: function(sourceName, data) {
-            root.isCheckingFlake = false
-            flakeRemoteSource.disconnectSource(sourceName)
-            root.parseRemoteProbe(data["stdout"] || "")
-        }
-    }
-
-    property var _pendingProbes: []
-
-    // ── Operations ───────────────────────────────────────────────────────────
     function refreshGenerations() {
-        if (root.isLoadingGens) return
-        root.isLoadingGens = true
-        // find avoids glob-expansion issues; semicolons instead of && so a missing
-        // active symlink doesn't abort the list; explicit exit 0 so DataSource
-        // never sees a non-zero exitCode from a missing-but-harmless path.
-        const cmd = "sh -c \"" +
-                    "readlink -f /nix/var/nix/profiles/system 2>/dev/null; " +
-                    "readlink -f /run/booted-system 2>/dev/null; " +
-                    "find /nix/var/nix/profiles -maxdepth 1 -name 'system-*-link' -type l " +
-                    "  -exec stat --format='%y %N' {} + 2>/dev/null; exit 0\""
-        gensSource.connectSource(cmd)
+        if (root.isLoadingGens)
+            return;
+        root.isLoadingGens = true;
+        sh(root.scriptDir + "generations", function (cmd, out, err, code) {
+            root.isLoadingGens = false;
+            const text = (out || "").trim();
+            if (!text) {
+                root.pushToast(i18n("No generations found — is /nix/var/nix/profiles/ accessible?"), true);
+                return;
+            }
+            root.parseGenerations(text);
+        });
+    }
+
+    function probeSysInfo() {
+        sh(root.scriptDir + "sysinfo", function (cmd, out, err, code) {
+            root.parseSysInfo(out || "");
+        });
+    }
+
+    function probeDiskUsage() {
+        sh(root.scriptDir + "diskusage", function (cmd, out, err, code) {
+            const p = (out || "").split("\x1e");
+            root.diskStoreBytes = parseInt((p[0] || "").trim(), 10) || 0;
+            root.diskReclaimableBytes = parseInt((p[1] || "").trim(), 10) || 0;
+            root.diskFreeBytes = parseInt((p[2] || "").trim(), 10) || 0;
+        });
+    }
+
+    function probeSecrets() {
+        const esc = s => (s || "").replace(/'/g, "'\\''");
+        const deployed = esc(plasmoid.configuration.secretsPath);
+        const source = esc(plasmoid.configuration.secretsSourcePath);
+        const flake = esc(root.flakePath);
+        sh(root.scriptDir + "secrets '" + deployed + "' '" + source + "' '" + flake + "'", function (cmd, out, err, code) {
+            root.parseSopsInfo(out || "");
+        });
+    }
+
+    function runHashProbe(mode, input) {
+        root.hashResult = null;
+        sh(root.scriptDir + "hash '" + mode + "' '" + input.replace(/'/g, "'\\''") + "'", function (cmd, out, err, code) {
+            const raw = (out || "").trim();
+            const isError = raw.startsWith("ERROR:");
+            root.hashResult = {
+                value: raw,
+                isError: isError
+            };
+        });
     }
 
     function getPreviousGen(genNum) {
         for (let i = 0; i < root.generations.length; i++) {
             if (root.generations[i].number === genNum) {
-                if (i + 1 < root.generations.length) {
-                    return root.generations[i + 1].number
-                }
-                break
+                return (i + 1 < root.generations.length) ? root.generations[i + 1].number : null;
             }
         }
-        return null
+        return null;
     }
 
     function loadGenDetails(genNum) {
         if (root.detailsCache[genNum] !== undefined) {
-            root.selectedGenNum = genNum
-            return
+            root.selectedGenNum = genNum;
+            return;
         }
-        if (root.isLoadingDetails) return
-        root.isLoadingDetails = true
-        detailsSource.queryGenNum = genNum
-        const link = "/nix/var/nix/profiles/system-" + genNum + "-link"
+        if (root.isLoadingDetails)
+            return;
+        root.isLoadingDetails = true;
 
-        // Find if this generation is active or booted
-        let isActive = false
-        let isBooted = false
+        const link = "/nix/var/nix/profiles/system-" + genNum + "-link";
+        let isBooted = false;
         for (let i = 0; i < root.generations.length; i++) {
             if (root.generations[i].number === genNum) {
-                isActive = root.generations[i].active
-                isBooted = root.generations[i].booted
-                break
+                isBooted = root.generations[i].booted;
+                break;
             }
         }
 
-        let baseProfilePath = ""
+        let basePath;
         if (isBooted) {
-            // Booted generation: always compare vs previous
-            const prev = root.getPreviousGen(genNum)
-            if (prev !== null) {
-                baseProfilePath = "/nix/var/nix/profiles/system-" + prev + "-link"
-            } else {
-                baseProfilePath = link
-            }
+            const prev = root.getPreviousGen(genNum);
+            basePath = prev !== null ? "/nix/var/nix/profiles/system-" + prev + "-link" : link;
+        } else if (root.diffMode === "booted") {
+            const bp = root.bootedStorePath !== "" ? root.bootedStorePath : root.activeStorePath;
+            basePath = bp !== "" ? bp : link;
         } else {
-            // Non-booted generation
-            if (root.diffMode === "booted") {
-                const bootedPath = root.bootedStorePath !== "" ? root.bootedStorePath : root.activeStorePath
-                baseProfilePath = bootedPath !== "" ? bootedPath : link
-            } else {
-                const prev = root.getPreviousGen(genNum)
-                if (prev !== null) {
-                    baseProfilePath = "/nix/var/nix/profiles/system-" + prev + "-link"
-                } else {
-                    baseProfilePath = link
-                }
-            }
+            const prev = root.getPreviousGen(genNum);
+            basePath = prev !== null ? "/nix/var/nix/profiles/system-" + prev + "-link" : link;
         }
 
-        // Semicolons + exit 0 so the command never fails even if diff-closures errors
-        const cmd = "sh -c \"cat " + link + "/nixos-version 2>/dev/null; echo; " +
-                    "readlink " + link + "/kernel 2>/dev/null; echo; " +
-                    "nix --extra-experimental-features 'nix-command' store diff-closures " + baseProfilePath + " " + link + " 2>/dev/null; exit 0\""
-        detailsSource.connectSource(cmd)
+        sh(root.scriptDir + "details '" + link + "' '" + basePath + "'", function (cmd, out, err, code) {
+            root.isLoadingDetails = false;
+            root.parseDetails(genNum, out || "");
+        });
+    }
+
+    function comparePair(genA, genB) {
+        if (genA <= 0 || genB <= 0 || genA === genB)
+            return;
+        root.pairDiffA = genA;
+        root.pairDiffB = genB;
+        const key = genA + "_" + genB;
+        if (root.pairDiffCache[key] !== undefined)
+            return;
+        if (root.isLoadingPairDiff)
+            return;
+        root.isLoadingPairDiff = true;
+        const linkA = "/nix/var/nix/profiles/system-" + genA + "-link";
+        const linkB = "/nix/var/nix/profiles/system-" + genB + "-link";
+        // base = B, target = A → diff shows what A has on top of B
+        sh(root.scriptDir + "details '" + linkA + "' '" + linkB + "'", function (cmd, out, err, code) {
+            root.isLoadingPairDiff = false;
+            root.parsePairDiff(genA, genB, out || "");
+        });
+    }
+
+    function parsePairDiff(genA, genB, text) {
+        const lines = text.split("\n");
+        const diffList = [];
+        for (let i = 4; i < lines.length; i++) {
+            const line = stripAnsi(lines[i]).trim();
+            if (!line)
+                continue;
+            const m = line.match(/^([^:]+):\s+(\S+)\s+(?:→|->)\s+([^\s,]+)(?:,\s+(.+))?/);
+            if (m) {
+                const oldV = m[2];
+                const newV = m[3];
+                let type = "upgrade";
+                if (oldV === "∅" || oldV === "null")
+                    type = "added";
+                else if (newV === "∅" || newV === "null")
+                    type = "removed";
+                diffList.push({
+                    name: m[1].trim(),
+                    oldVersion: oldV,
+                    newVersion: newV,
+                    size: (m[4] || "").trim(),
+                    type
+                });
+            }
+        }
+        const cache = Object.assign({}, root.pairDiffCache);
+        cache[genA + "_" + genB] = {
+            diff: diffList
+        };
+        root.pairDiffCache = cache;
+        root.loadIcons(diffList);
+    }
+
+    function loadIcons(diffList) {
+        if (!plasmoid.configuration.showPackageIcons)
+            return;
+        const unknown = diffList.map(d => d.name).filter(n => !(n in root.iconCache));
+        if (unknown.length === 0)
+            return;
+        const input = unknown.join("\n");
+        sh("echo '" + input.replace(/'/g, "'\\''") + "' | " + root.scriptDir + "icons", function (cmd, out, err, code) {
+            const updated = Object.assign({}, root.iconCache);
+            (out || "").split("\n").forEach(line => {
+                const tab = line.indexOf("\t");
+                if (tab > 0)
+                    updated[line.substring(0, tab)] = line.substring(tab + 1).trim();
+            });
+            unknown.forEach(n => {
+                if (!(n in updated))
+                    updated[n] = "";
+            });
+            root.iconCache = updated;
+        });
     }
 
     function checkFlakeUpdates() {
-        if (root.isCheckingFlake || root.flakePath === "") return
-        root.isCheckingFlake = true
-        flakeLockSource.connectSource("cat " + root.flakePath + "/flake.lock 2>/dev/null")
-    }
-
-    function startRemoteProbe(lockText) {
-        let lock
-        try {
-            lock = JSON.parse(lockText)
-        } catch(e) {
-            root.isCheckingFlake = false
-            root.pushToast(i18n("Failed to parse flake.lock: %1").arg(e), true)
-            return
-        }
-        const nodes = lock.nodes || {}
-        const rootInputs = (nodes.root && nodes.root.inputs) ? nodes.root.inputs : {}
-        const probes = []
-        for (const key in rootInputs) {
-            const refKey = rootInputs[key]
-            if (typeof refKey !== "string") continue
-            const node = nodes[refKey]
-            if (!node || !node.locked || !node.original) continue
-            const orig = node.original
-            const locked = node.locked
-            let url = ""
-            if (orig.type === "github") {
-                url = "https://github.com/" + orig.owner + "/" + orig.repo + ".git"
-            } else if (orig.type === "gitlab") {
-                url = "https://gitlab.com/" + orig.owner + "/" + orig.repo + ".git"
-            } else if (orig.type === "git") {
-                url = orig.url || ""
-                if (url.indexOf("git+") === 0) url = url.substring(4)
-            } else {
-                continue
+        if (root.isCheckingFlake || root.flakePath === "")
+            return;
+        root.isCheckingFlake = true;
+        const path = root.flakePath.replace(/'/g, "'\\''");
+        sh(root.scriptDir + "flake-probe '" + path + "'", function (cmd, out, err, code) {
+            root.isCheckingFlake = false;
+            if (code !== 0) {
+                const msg = (err || out || "").trim() || i18n("flake-probe failed");
+                root.pushToast(msg, true);
+                return;
             }
-            if (!url) continue
-            probes.push({
-                name: key,
-                url: url,
-                ref: orig.ref || "",
-                currentRev: locked.rev || "",
-                currentDate: locked.lastModified || 0
-            })
-        }
-        if (probes.length === 0) {
-            root.isCheckingFlake = false
-            root.flakeUpdates = []
-            root.lastFlakeCheckTime = new Date().toLocaleTimeString()
-            return
-        }
-        root._pendingProbes = probes
-
-        let script = ""
-        for (let i = 0; i < probes.length; i++) {
-            const p = probes[i]
-            const refs = p.ref
-                ? "'refs/heads/" + p.ref + "' 'refs/tags/" + p.ref + "' '" + p.ref + "'"
-                : "HEAD"
-            // Each probe prints: "name|<remote-sha>" then newline
-            script += "printf '" + p.name + "|'; "
-            script += "git ls-remote '" + p.url + "' " + refs + " 2>/dev/null | head -1 | cut -f1; "
-        }
-        script += "exit 0"
-        flakeRemoteSource.connectSource("sh -c \"" + script.replace(/"/g, '\\"') + "\"")
+            root.parseFlakeProbe(out || "");
+        });
     }
 
-    function parseRemoteProbe(text) {
-        const lines = text.split("\n")
-        const byName = {}
-        for (let i = 0; i < root._pendingProbes.length; i++) {
-            byName[root._pendingProbes[i].name] = root._pendingProbes[i]
-        }
-        const updates = []
-        const unreachable = []
+    function parseFlakeProbe(text) {
+        const lines = text.split("\n");
+        const updates = [];
+        const unreachable = [];
+
         for (let i = 0; i < lines.length; i++) {
-            const line = lines[i]
-            const sep = line.indexOf("|")
-            if (sep < 0) continue
-            const name = line.substring(0, sep)
-            const remoteRev = line.substring(sep + 1).trim()
-            const probe = byName[name]
-            if (!probe) continue
-            if (!remoteRev) {
-                unreachable.push(name)
-                continue
-            }
-            if (probe.currentRev && remoteRev !== probe.currentRev) {
-                const repoUrl = probe.url.replace(/\.git$/, "")
-                updates.push({
-                    input:   name,
-                    oldRev:  probe.currentRev.substring(0, 7),
-                    newRev:  remoteRev.substring(0, 7),
-                    oldDate: probe.currentDate ? new Date(probe.currentDate * 1000).toLocaleDateString() : "",
-                    newDate: i18n("latest"),
-                    url:     repoUrl
-                })
-            }
-        }
-        root.flakeUpdates = updates
-        root.lastFlakeCheckTime = new Date().toLocaleTimeString()
+            const parts = lines[i].split("\t");
+            if (parts.length < 6)
+                continue;
+            const name = parts[0];
+            const status = parts[1];
+            const oldRev = parts[2];
+            const newRev = parts[3];
+            const oldDateTs = parseInt(parts[4]) || 0;
+            const url = parts[5];
+            if (!name)
+                continue;
 
-        if (unreachable.length > 0) {
-            root.pushToast(i18n("Could not reach: %1").arg(unreachable.join(", ")), true)
+            if (status === "unreachable") {
+                unreachable.push(name);
+                continue;
+            }
+            if (status !== "ok")
+                continue;
+
+            updates.push({
+                input: name,
+                oldRev: oldRev.substring(0, 7),
+                newRev: newRev.substring(0, 7),
+                oldDate: oldDateTs > 0 ? new Date(oldDateTs * 1000).toLocaleDateString() : "",
+                newDate: i18n("latest"),
+                url: url.replace(/\.git$/, "")
+            });
         }
 
-        if (updates.length > 0 && plasmoid.configuration.showNotifications) {
-            const p = Qt.createQmlObject(
-                'import org.kde.plasma.plasma5support as P5Support; P5Support.DataSource { engine: "executable" }',
-                root)
-            p.connectSource("notify-send -i system-software-update 'NixOS Flake Updates' '" + updates.length + " flake input(s) have updates available'")
+        root.flakeUpdates = updates;
+        root.lastFlakeCheckTime = new Date().toLocaleTimeString();
+
+        if (unreachable.length > 0)
+            root.pushToast(i18n("Could not reach: %1").arg(unreachable.join(", ")), true);
+
+        if (updates.length > 0)
+            root.notify(i18n("NixOS — flake updates available"), i18np("%1 flake input has updates available", "%1 flake inputs have updates available", updates.length), false);
+    }
+
+    function runCustomCommand(cmd, label) {
+        const workDir = root.flakePath !== "" ? root.flakePath : "~";
+        sh(root.scriptDir + "terminal '" + root.terminalApp + "' '" + workDir + "' '" + cmd + "'", null);
+        root.pushToast(i18n("Launching: %1").arg(label), false);
+        // Start watching for a new generation. The external command runs in a terminal
+        // we don't control, so we infer success from the system profile growing.
+        cmdWatcher.label = label;
+        cmdWatcher.baselineCount = root.generations.length;
+        cmdWatcher.baselineActiveNum = root.activeGenNum;
+        cmdWatcher.elapsed = 0;
+        cmdWatcher.restart();
+    }
+
+    // Polls every 10s for up to 30 min after a custom command launch, firing a
+    // notification + refresh when a new generation appears.
+    Timer {
+        id: cmdWatcher
+        interval: 10000
+        repeat: true
+        property string label: ""
+        property int baselineCount: 0
+        property int baselineActiveNum: 0
+        property int elapsed: 0
+        onTriggered: {
+            elapsed += interval;
+            // Refresh the gen list to see if it grew.
+            sh(root.scriptDir + "generations", function (cmd, out, err, code) {
+                const text = (out || "").trim();
+                if (!text)
+                    return;
+                // Count non-empty data lines (mirrors parseGenerations: skip first 1-2 header rows).
+                const lines = text.split("\n").filter(l => l.trim() !== "");
+                const count = lines.length > 1 ? lines.length - 1 : 0;
+                if (count > cmdWatcher.baselineCount) {
+                    cmdWatcher.stop();
+                    root.refreshGenerations();
+                    root.probeDiskUsage();
+                    root.notify(i18n("NixOS — %1 finished").arg(cmdWatcher.label), i18n("A new system generation is available."), false);
+                }
+            });
+            if (elapsed >= 30 * 60 * 1000)
+                stop();
         }
     }
 
     function requestAction(genNum, action) {
-        if (plasmoid.configuration.confirmBeforeRollback) {
-            root.pendingGenNum = genNum
-            root.pendingAction = action
-            confirmDialog.open()
+        if (root.isBusy) {
+            root.pushToast(i18n("Already running another action — please wait."), true);
+            return;
+        }
+        const needsConfirm = (action === "rollback" || action === "switch") ? plasmoid.configuration.confirmBeforeRollback : plasmoid.configuration.confirmBeforeDelete;
+        if (needsConfirm) {
+            root.pendingGenNum = genNum;
+            root.pendingAction = action;
         } else {
-            executeAction(genNum, action)
+            executeAction(genNum, action);
+        }
+    }
+
+    function cancelPendingAction() {
+        root.pendingGenNum = -1;
+        root.pendingAction = "";
+    }
+
+    function confirmPendingAction() {
+        if (root.pendingGenNum > 0 && root.pendingAction !== "") {
+            const g = root.pendingGenNum;
+            const a = root.pendingAction;
+            root.pendingGenNum = -1;
+            root.pendingAction = "";
+            executeAction(g, a);
         }
     }
 
     function executeAction(genNum, action) {
-        if (root.isBusy) return
-        root.isBusy = true
-        actionSource.actionType = action
-        actionSource.actionGenNum = genNum
-        const prefix = plasmoid.configuration.usePkexec ? "pkexec " : ""
-        var cmd
-        if (action === "rollback") {
-            // Switch the system profile to the chosen generation, then re-run
-            // switch-to-configuration boot so the bootloader entry is updated.
-            // We use the profile symlink's own switch-to-configuration so it
-            // matches that generation's NixOS version.
-            cmd = "sh -c \"" + prefix + "nix-env --profile /nix/var/nix/profiles/system --switch-generation " + genNum +
-                  " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration boot 2>&1\""
+        if (root.isBusy)
+            return;
+        root.isBusy = true;
+        root.currentActionType = action;
+        root.currentActionGenNum = genNum;
+
+        const prefix = plasmoid.configuration.usePkexec ? "pkexec " : "";
+        const pathExport = "export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; ";
+        const profileSwitch = prefix + "nix-env --profile /nix/var/nix/profiles/system --switch-generation " + genNum;
+
+        let cmd;
+        if (action === "switch") {
+            cmd = "sh -c \"" + pathExport + profileSwitch + " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration switch 2>&1\"";
+        } else if (action === "rollback") {
+            cmd = "sh -c \"" + pathExport + profileSwitch + " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration boot 2>&1\"";
         } else {
-            cmd = "sh -c \"" + prefix + "nix-env --profile /nix/var/nix/profiles/system --delete-generations " + genNum + " 2>&1\""
+            cmd = "sh -c \"" + pathExport + prefix + "nix-env --profile /nix/var/nix/profiles/system --delete-generations " + genNum + " 2>&1\"";
         }
-        actionSource.connectSource(cmd)
+
+        sh(cmd, function (c, out, err, code) {
+            root.isBusy = false;
+            if (code !== 0) {
+                const msg = (err || out || "").trim();
+                const labels = {
+                    switch: i18n("Live switch failed: "),
+                    rollback: i18n("Set-next-boot failed: "),
+                    delete: i18n("Delete failed: ")
+                };
+                root.pushToast((labels[action] || "") + msg, true);
+                return;
+            }
+            const ok = {
+                switch: i18n("Generation %1 is now active."),
+                rollback: i18n("Generation %1 set for next boot. Reboot to activate."),
+                delete: i18n("Generation %1 deleted.")
+            };
+            const okTitle = {
+                switch: i18n("NixOS — generation activated"),
+                rollback: i18n("NixOS — next boot set"),
+                delete: i18n("NixOS — generation deleted")
+            };
+            root.pushToast(ok[action].arg(genNum), false);
+            root.notify(okTitle[action], ok[action].arg(genNum), false);
+            if (action === "delete" && root.selectedGenNum === genNum)
+                root.selectedGenNum = -1;
+            root.refreshGenerations();
+            root.probeDiskUsage();
+        });
     }
 
     // ── Parsers ───────────────────────────────────────────────────────────────
+
     function parseGenerations(text) {
-        const lines = text.trim().split("\n")
-        if (lines.length < 1) return
+        const lines = text.split("\n");
 
-        // First line is readlink output (active store path).
-        // Second line is readlink output for booted system.
-        let activePath = ""
-        let bootedPath = ""
-        let startIdx   = 0
+        let activePath = "";
+        let bootedPath = "";
+        let startIdx = 0;
         if (lines[0] && (lines[0].startsWith("/nix/store/") || lines[0].startsWith("/nix/var/"))) {
-            activePath = lines[0].trim()
-            startIdx   = 1
+            activePath = lines[0].trim();
+            startIdx = 1;
             if (lines[1] && (lines[1].startsWith("/nix/store/") || lines[1].startsWith("/nix/var/"))) {
-                bootedPath = lines[1].trim()
-                startIdx   = 2
+                bootedPath = lines[1].trim();
+                startIdx = 2;
             }
         }
-        root.activeStorePath = activePath
-        root.bootedStorePath = bootedPath
+        root.activeStorePath = activePath;
+        root.bootedStorePath = bootedPath;
 
-        const list = []
-        let activeNum = -1
-        let bootedNum = -1
-
+        const list = [];
+        let activeNum = -1;
+        let bootedNum = -1;
         for (let i = startIdx; i < lines.length; i++) {
-            const line = lines[i]
-            // stat %y %N: "2026-05-20 00:42:13.325 +0200 '/nix/.../system-398-link' -> '/nix/store/...'"
-            const match = line.match(/^([\d-]+ [\d:]+)\.\d+ [+-]\d+ '([^']*system-(\d+)-link)' -> '([^']+)'/)
-            if (match) {
-                const time      = match[1]
-                const genNum    = parseInt(match[3])
-                const storePath = match[4]
-                const isActive  = activePath !== "" && storePath === activePath
-                const isBooted  = bootedPath !== "" && storePath === bootedPath
-                if (isActive) activeNum = genNum
-                if (isBooted) bootedNum = genNum
-                list.push({ number: genNum, timestamp: time, storePath: storePath, active: isActive, booted: isBooted })
-            }
+            const m = lines[i].match(/^([\d-]+ [\d:]+)\.\d+ [+-]\d+ '([^']*system-(\d+)-link)' -> '([^']+)'/);
+            if (!m)
+                continue;
+            const genNum = parseInt(m[3]);
+            const storePath = m[4];
+            const isActive = activePath !== "" && storePath === activePath;
+            const isBooted = bootedPath !== "" && storePath === bootedPath;
+            if (isActive)
+                activeNum = genNum;
+            if (isBooted)
+                bootedNum = genNum;
+            list.push({
+                number: genNum,
+                timestamp: m[1],
+                storePath,
+                active: isActive,
+                booted: isBooted
+            });
         }
 
-        // If nothing matched active yet, mark highest gen as active fallback
+        list.sort((a, b) => b.number - a.number);
+
         if (activeNum === -1 && list.length > 0) {
-            list.sort((a, b) => b.number - a.number)
-            activeNum = list[0].number
-            for (let i = 0; i < list.length; i++) {
-                if (list[i].number === activeNum) {
-                    list[i].active = true
-                    break
-                }
-            }
-        } else {
-            list.sort((a, b) => b.number - a.number)
+            activeNum = list[0].number;
+            list[0].active = true;
         }
 
         // Keep only the highest generation matching the booted store path
-        let maxBootedGen = -1
-        for (let i = 0; i < list.length; i++) {
-            if (list[i].booted && list[i].number > maxBootedGen) {
-                maxBootedGen = list[i].number
-            }
-        }
-        if (maxBootedGen !== -1) {
-            bootedNum = maxBootedGen
-            for (let i = 0; i < list.length; i++) {
-                list[i].booted = (list[i].number === bootedNum)
-            }
-        } else {
-            bootedNum = activeNum
-            for (let i = 0; i < list.length; i++) {
-                list[i].booted = (list[i].number === bootedNum)
-            }
-        }
+        let maxBooted = list.reduce((max, g) => g.booted && g.number > max ? g.number : max, -1);
+        if (maxBooted === -1)
+            maxBooted = activeNum;
+        bootedNum = maxBooted;
+        for (let i = 0; i < list.length; i++)
+            list[i].booted = (list[i].number === bootedNum);
 
-        const maxG = Math.max(3, plasmoid.configuration.maxGenerations || 10)
-        if (list.length > maxG) list.splice(maxG)
+        const maxG = Math.max(3, plasmoid.configuration.maxGenerations || 10);
+        if (list.length > maxG)
+            list.splice(maxG);
 
-        root.generations = list
-        root.activeGenNum = activeNum
-        root.bootedGenNum = bootedNum
+        root.generations = list;
+        root.activeGenNum = activeNum;
+        root.bootedGenNum = bootedNum;
+
+        root.probeSysInfo();
+    }
+
+    function stripAnsi(s) {
+        return s.replace(/\x1b\[[0-9;]*[mGKHFABCDEFJRSTsu]/g, "");
     }
 
     function parseDetails(genNum, text) {
-        const lines = text.split("\n")
-        if (lines.length < 1) return
-        const nixosVer   = lines[0].trim()
-        const kernelPath = lines[2] ? lines[2].trim() : ""
-        const kMatch     = kernelPath.match(/linux-([^\/\-]+(?:-[^\/]+)?)/)
-        const kernelVer  = kMatch ? kMatch[1] : (kernelPath || "—")
+        // \x1e separates: [0]=nixos-version  [1]=kernel-path  [2]=diff lines
+        const parts = text.split("\x1e");
+        const nixosVer = stripAnsi((parts[0] || "").trim());
+        const kernelPath = stripAnsi((parts[1] || "").trim());
+        const kMatch = kernelPath.match(/linux-([^/]+)/);
+        const kernelVer = kMatch ? kMatch[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
+        const diffRaw = parts[2] || "";
+        const sizeRaw = (parts[3] || "").trim();
+        const closureBytes = /^\d+$/.test(sizeRaw) ? parseInt(sizeRaw, 10) : 0;
 
-        const diffList = []
-        for (let i = 4; i < lines.length; i++) {
-            const line = lines[i].trim()
-            if (!line) continue
-            const match = line.match(/^([^:]+):\s+(\S+)\s+(?:→|->)\s+([^\s,]+)(?:,\s+(.+))?/)
-            if (match) {
-                const name = match[1].trim()
-                const oldV = match[2]
-                const newV = match[3]
-                const size = match[4] || ""
-                let type = "upgrade"
-                if (oldV === "∅" || oldV === "null") type = "added"
-                else if (newV === "∅" || newV === "null") type = "removed"
-                diffList.push({ name, oldVersion: oldV, newVersion: newV, size, type })
-            } else {
-                diffList.push({ name: line, oldVersion: "", newVersion: "", size: "", type: "info" })
+        const diffList = [];
+        const lines = diffRaw.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            const line = stripAnsi(lines[i]).trim();
+            if (!line)
+                continue;
+            const m = line.match(/^([^:]+):\s+(\S+)\s+(?:→|->)\s+([^\s,]+)(?:,\s+(.+))?/);
+            if (m) {
+                const oldV = m[2];
+                const newV = m[3];
+                let type = "upgrade";
+                if (oldV === "∅" || oldV === "null")
+                    type = "added";
+                else if (newV === "∅" || newV === "null")
+                    type = "removed";
+                diffList.push({
+                    name: m[1].trim(),
+                    oldVersion: oldV,
+                    newVersion: newV,
+                    size: (m[4] || "").trim(),
+                    type
+                });
             }
         }
 
-        const cache = Object.assign({}, root.detailsCache)
-        cache[genNum] = { nixosVer, kernelVer, diff: diffList }
-        root.detailsCache = cache
-        root.selectedGenNum = genNum
+        // Extract commit date from nixos version e.g. "25.11.20260518.abc1234"
+        let commitDate = "";
+        const dateM = nixosVer.match(/(\d{4})(\d{2})(\d{2})/);
+        if (dateM)
+            commitDate = dateM[1] + "-" + dateM[2] + "-" + dateM[3];
+
+        const cache = Object.assign({}, root.detailsCache);
+        cache[genNum] = {
+            nixosVer,
+            kernelVer,
+            commitDate,
+            diff: diffList,
+            closureBytes
+        };
+        root.detailsCache = cache;
+        root.loadIcons(diffList);
+        root.selectedGenNum = genNum;
+    }
+
+    function parseSysInfo(text) {
+        const p = text.split("---");
+        root.hostname = p[0] ? p[0].trim() : "";
+        root.nixosVersion = p[1] ? p[1].trim() : "";
+        root.uptime = p[2] ? p[2].trim() : "";
+        root.lastActivationTime = p[3] ? p[3].trim() : "";
+    }
+
+    function parseSopsInfo(text) {
+        const blocks = text.split("===");
+        root.deployedSecrets = parseSecretsBlock(blocks[0] || "", "deployed");
+        root.sourceSecrets = parseSecretsBlock(blocks[1] || "", "source");
+    }
+
+    function parseSecretsBlock(raw, kind) {
+        const empty = {
+            path: "",
+            exists: false,
+            lastModified: "",
+            freshness: "",
+            fileCount: 0,
+            names: [],
+            encKind: "",
+            sopsVersion: "",
+            recipientCount: 0,
+            encType: ""
+        };
+        // Preserve a leading empty line (path=empty) by only trimming, not filtering.
+        const rawLines = raw.split("\n").map(l => l.trim());
+        // Drop leading blank lines AND trailing blank lines, keep blanks in between.
+        let start = 0;
+        while (start < rawLines.length && rawLines[start] === "")
+            start++;
+        // If the first non-blank line is a status keyword, the path field was empty.
+        if (start >= rawLines.length || rawLines[start] === "missing")
+            return empty;
+        const lines = rawLines.slice(start).filter(l => l !== "");
+        if (lines.length < 2)
+            return empty;
+        const sep = lines.indexOf("---");
+        const exists = lines[1] === "exists";
+        const lastModified = (sep > 2) ? lines[2] : "";
+        const names = lines.filter(l => l.startsWith("name:")).map(l => l.slice(5));
+
+        if (kind === "deployed") {
+            const freshness = (sep >= 0 && lines.length > sep + 1) ? lines[sep + 1] : "";
+            const fileCount = (sep >= 0 && lines.length > sep + 2) ? (parseInt(lines[sep + 2]) || 0) : 0;
+            return {
+                path: lines[0],
+                exists,
+                lastModified,
+                freshness,
+                fileCount,
+                names,
+                encKind: "",
+                sopsVersion: "",
+                recipientCount: 0,
+                encType: ""
+            };
+        } else {
+            const encKind = (sep >= 0 && lines.length > sep + 1) ? lines[sep + 1] : "";
+            const sopsVersion = (sep >= 0 && lines.length > sep + 2) ? lines[sep + 2] : "";
+            const recipientCount = (sep >= 0 && lines.length > sep + 3) ? (parseInt(lines[sep + 3]) || 0) : 0;
+            const encType = (sep >= 0 && lines.length > sep + 4) ? lines[sep + 4] : "";
+            return {
+                path: lines[0],
+                exists,
+                lastModified,
+                freshness: "",
+                fileCount: names.length,
+                names,
+                encKind,
+                sopsVersion,
+                recipientCount,
+                encType
+            };
+        }
     }
 
     // ── Init & timers ─────────────────────────────────────────────────────────
     Component.onCompleted: {
-        refreshGenerations()
-        if (root.flakePath !== "") checkFlakeUpdates()
+        refreshGenerations();
+        probeSysInfo();
+        probeSecrets();
+        probeDiskUsage();
+        if (root.flakePath !== "")
+            checkFlakeUpdates();
     }
 
     onExpandedChanged: {
-        if (expanded && plasmoid.configuration.autoRefreshOnOpen) {
-            refreshGenerations()
+        if (expanded) {
+            if (plasmoid.configuration.autoRefreshOnOpen) {
+                refreshGenerations();
+                probeSysInfo();
+                probeDiskUsage();
+            }
+        } else {
+            // Persist the size the user left the popup at
+            if (_lastWidth >= 360 && _lastHeight >= 340) {
+                plasmoid.configuration.popupWidth = _lastWidth;
+                plasmoid.configuration.popupHeight = _lastHeight;
+            }
         }
     }
 
@@ -571,1124 +820,118 @@ PlasmoidItem {
         interval: Math.max(60, plasmoid.configuration.checkInterval || 3600) * 1000
         running: root.flakePath !== ""
         repeat: true
-        onTriggered: checkFlakeUpdates()
+        onTriggered: root.checkFlakeUpdates()
     }
 
-    // ── Confirmation Dialog ───────────────────────────────────────────────────
-    Dialog {
-        id: confirmDialog
-        title: root.pendingAction === "rollback"
-            ? i18n("Switch Generation")
-            : i18n("Delete Generation")
-        modal: true
-        anchors.centerIn: parent
-        width: Math.min(360, parent.width - 32)
-
-        background: Rectangle {
-            radius: 10
-            color:  plasmoid.configuration.showBg
-                        ? (plasmoid.configuration.bgColor || "#d90d0f1a")
-                        : Kirigami.Theme.backgroundColor
-            border.color: Qt.rgba(1, 1, 1, 0.15)
-            border.width: 1
-        }
-
-        contentItem: ColumnLayout {
-            spacing: 12
-            anchors.margins: 4
-
-            Kirigami.Icon {
-                source: root.pendingAction === "rollback" ? "system-reboot" : "edit-delete"
-                implicitWidth: 36; implicitHeight: 36
-                color: root.pendingAction === "delete" ? "#ff5555" : root.accentColor
-                Layout.alignment: Qt.AlignHCenter
-            }
-
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.WordWrap
-                horizontalAlignment: Text.AlignHCenter
-                color: root.textColor
-                font.pixelSize: Math.round(11 * root.fs)
-                text: root.pendingAction === "rollback"
-                    ? i18n("Boot into generation %1 on next reboot?\n\nThis switches the system profile and updates the bootloader. Your current session is unchanged — reboot to activate.%2")
-                        .arg(root.pendingGenNum)
-                        .arg(plasmoid.configuration.usePkexec ? i18n("\n\nA password prompt will appear.") : "")
-                    : i18n("Permanently delete generation %1?\n\nThis cannot be undone.%2")
-                        .arg(root.pendingGenNum)
-                        .arg(plasmoid.configuration.usePkexec ? i18n("\n\nA password prompt will appear.") : "")
-            }
-
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                Button {
-                    Layout.fillWidth: true
-                    text: i18n("Cancel")
-                    onClicked: confirmDialog.close()
-                    background: Rectangle {
-                        radius: 4
-                        color: parent.hovered ? Qt.rgba(1,1,1,0.08) : Qt.rgba(1,1,1,0.04)
-                        border.color: Qt.rgba(1,1,1,0.12); border.width: 1
-                    }
-                    contentItem: Text {
-                        text: parent.text; color: root.textColor
-                        font.pixelSize: Math.round(10 * root.fs)
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-
-                Button {
-                    Layout.fillWidth: true
-                    text: root.pendingAction === "rollback" ? i18n("Switch") : i18n("Delete")
-                    onClicked: {
-                        confirmDialog.close()
-                        root.executeAction(root.pendingGenNum, root.pendingAction)
-                    }
-                    background: Rectangle {
-                        radius: 4
-                        color: root.pendingAction === "delete"
-                            ? (parent.hovered ? Qt.rgba(1,0.2,0.2,0.35) : Qt.rgba(1,0.2,0.2,0.2))
-                            : (parent.hovered ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.35)
-                                              : Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.2))
-                        border.color: root.pendingAction === "delete" ? "#ff5555" : root.accentColor
-                        border.width: 1
-                    }
-                    contentItem: Text {
-                        text: parent.text; color: root.textColor
-                        font.pixelSize: Math.round(10 * root.fs); font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-            }
-        }
+    Timer {
+        interval: 300000
+        running: true
+        repeat: true
+        onTriggered: root.probeSysInfo()
     }
 
-    // ── Compact panel icon ────────────────────────────────────────────────────
-    compactRepresentation: Item {
-        id: compactRoot
-        implicitWidth:  Kirigami.Units.gridUnit * 2.2
-        implicitHeight: Kirigami.Units.gridUnit * 2.2
+    // Disk usage is expensive (du + nix-collect-garbage --dry-run) — poll slowly.
+    Timer {
+        interval: 600000
+        running: true
+        repeat: true
+        onTriggered: root.probeDiskUsage()
+    }
 
-        Layout.minimumWidth: implicitWidth
-        Layout.preferredWidth: implicitWidth
-        Layout.minimumHeight: implicitHeight
-        Layout.preferredHeight: implicitHeight
-
-        readonly property string style: plasmoid.configuration.compactStyle || "icon"
-
-        MouseArea {
-            id: compactMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            acceptedButtons: Qt.LeftButton
-            z: 10
-            onClicked: root.expanded = !root.expanded
-        }
-
-        Rectangle {
-            anchors.fill: parent
-            anchors.margins: 2
-            radius: 5
-            color: compactMouse.containsMouse ? Qt.rgba(1,1,1,0.12) : "transparent"
-            Behavior on color { ColorAnimation { duration: 120 } }
-        }
-
-        // Icon-only or icon+label
-        Kirigami.Icon {
-            id: compactIcon
-            visible: compactRoot.style !== "number"
-            source: Qt.resolvedUrl("nixos-logo.svg")
-            color: root.flakeUpdates.length > 0 ? "#cc88ff" : root.accentColor
-            anchors.centerIn: parent
-            implicitWidth:  compactRoot.style === "both" ? parent.width * 0.55 : parent.width - 10
-            implicitHeight: implicitWidth
-            anchors.verticalCenterOffset: compactRoot.style === "both" ? -4 : 0
-            Behavior on color { ColorAnimation { duration: 300 } }
-        }
-
-        // Generation number label (for "number" and "both" styles)
-        Text {
-            visible: compactRoot.style !== "icon" && root.activeGenNum > 0
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: compactRoot.style === "both" ? 3 : 0
-            anchors.verticalCenter: compactRoot.style === "number" ? parent.verticalCenter : undefined
-            text: root.activeGenNum > 0 ? root.activeGenNum : "—"
-            color: root.textColor
-            font.pixelSize: compactRoot.style === "both" ? 8 : 11
-            font.bold: true
-        }
-
-        // Update badge
-        Rectangle {
-            visible: plasmoid.configuration.compactShowBadge && root.flakeUpdates.length > 0
-            anchors.top: parent.top;  anchors.right: parent.right
-            anchors.topMargin: 3;     anchors.rightMargin: 3
-            width: 14; height: 14; radius: 7
-            color: "#cc88ff"
-            border.color: Kirigami.Theme.backgroundColor; border.width: 1.5
-
-            Text {
-                anchors.centerIn: parent
-                text: root.flakeUpdates.length
-                color: "#ffffff"; font.pixelSize: 8; font.bold: true
-            }
-        }
-
-        // Busy spinner overlay – rotating NixOS logo
-        Kirigami.Icon {
-            id: compactSpinner
-            anchors.centerIn: parent
-            visible: root.isBusy || root.isLoadingGens
-            source: Qt.resolvedUrl("nixos-logo.svg")
-            color: root.accentColor
-            width: parent.width - 6; height: parent.height - 6
-            RotationAnimation on rotation {
-                running: compactSpinner.visible
-                from: 0; to: 360
-                duration: 1400
-                loops: Animation.Infinite
-            }
-        }
+    // ── Compact representation ────────────────────────────────────────────────
+    compactRepresentation: CompactView {
+        accentColor: root.accentColor
+        textColor: root.textColor
+        activeGenNum: root.activeGenNum
+        flakeUpdates: root.flakeUpdates
+        isBusy: root.isBusy
+        isLoadingGens: root.isLoadingGens
+        compactStyle: plasmoid.configuration.compactStyle || "icon"
+        compactShowBadge: plasmoid.configuration.compactShowBadge
+        iconStyle: root.iconStyle
+        onToggleExpanded: root.expanded = !root.expanded
     }
 
     // ── Full representation ───────────────────────────────────────────────────
-    fullRepresentation: Item {
-        id: container
+    fullRepresentation: FullView {
+        accentColor: root.accentColor
+        timelineColor: root.timelineColor
+        textColor: root.textColor
+        fs: root.fs
+        showBg: plasmoid.configuration.showBg
+        bgColor: Qt.color(plasmoid.configuration.bgColor || "#800a0c14")
+        bgRadius: plasmoid.configuration.bgRadius || 14
+        isBusy: root.isBusy
+        isLoadingGens: root.isLoadingGens
+        isLoadingDetails: root.isLoadingDetails
+        isCheckingFlake: root.isCheckingFlake
+        generations: root.generations
+        flakeUpdates: root.flakeUpdates
+        toasts: root.toasts
+        lastFlakeCheckTime: root.lastFlakeCheckTime
+        activeGenNum: root.activeGenNum
+        bootedGenNum: root.bootedGenNum
+        selectedGenNum: root.selectedGenNum
+        detailsCache: root.detailsCache
+        diffFilter: root.diffFilter
+        diffMode: root.diffMode
+        showDeleteButton: plasmoid.configuration.showDeleteButton
+        diffFilterEnabled: plasmoid.configuration.diffFilterEnabled
+        showFlakeSection: plasmoid.configuration.showFlakeSection
+        showCommandButtons: plasmoid.configuration.showCommandButtons
+        customCommands: root.customCommands
+        actionType: root.currentActionType
+        actionGenNum: root.currentActionGenNum
+        activeViewMode: root.activeViewMode
+        sopsStatus: root.sopsStatus
+        deployedSecrets: root.deployedSecrets
+        sourceSecrets: root.sourceSecrets
+        hostname: root.hostname
+        nixosVersion: root.nixosVersion
+        lastActivationTime: root.lastActivationTime
+        uptime: root.uptime
+        diskStoreBytes: root.diskStoreBytes
+        diskReclaimableBytes: root.diskReclaimableBytes
+        diskFreeBytes: root.diskFreeBytes
+        hashResult: root.hashResult
+        pendingGenNum: root.pendingGenNum
+        pendingAction: root.pendingAction
+        usePkexec: plasmoid.configuration.usePkexec
+        pairDiffCache: root.pairDiffCache
+        isLoadingPairDiff: root.isLoadingPairDiff
+        diffViewMode: plasmoid.configuration.diffViewMode || "compact"
+        iconCache: root.iconCache
+        showPackageIcons: plasmoid.configuration.showPackageIcons
+        iconStyle: root.iconStyle
 
-        // Glass card background
-        Rectangle {
-            anchors.fill: parent
-            radius: plasmoid.configuration.bgRadius || 12
-            visible: plasmoid.configuration.showBg
-            color: plasmoid.configuration.bgColor || "#d90d0f1a"
-            border.color: Qt.rgba(1,1,1,0.10); border.width: 1
-
-            Rectangle {
-                anchors { left: parent.left; right: parent.right; top: parent.top }
-                anchors.leftMargin: 16; anchors.rightMargin: 16; anchors.topMargin: 1
-                height: 1; radius: 0.5
-                color: Qt.rgba(1,1,1,0.18)
-            }
+        onViewModeChanged: mode => root.activeViewMode = mode
+        onConfirmPending: () => root.confirmPendingAction()
+        onCancelPending: () => root.cancelPendingAction()
+        onCompareRequested: (a, b) => root.comparePair(a, b)
+        onDiffViewModeChanged: mode => plasmoid.configuration.diffViewMode = mode
+        onRefreshRequested: () => root.refreshGenerations()
+        onCheckFlakeRequested: () => root.checkFlakeUpdates()
+        onSelectGen: n => root.loadGenDetails(n)
+        onCollapseGen: () => root.selectedGenNum = -1
+        onRequestAction: (n, a) => root.requestAction(n, a)
+        onDiffModeToggle: function (genNum) {
+            root.diffMode = (root.diffMode === "booted" ? "prev" : "booted");
+            const cache = Object.assign({}, root.detailsCache);
+            delete cache[genNum];
+            root.detailsCache = cache;
+            root.loadGenDetails(genNum);
         }
-
-        ColumnLayout {
-            anchors.fill: parent
-            anchors.margins: plasmoid.configuration.showBg ? 12 : 4
-            spacing: 8
-
-            // ── Header ───────────────────────────────────────────────────────
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
-                Kirigami.Icon {
-                    source: Qt.resolvedUrl("nixos-logo.svg")
-                    implicitWidth: 22; implicitHeight: 22
-                    color: root.accentColor
-                }
-
-                Column {
-                    Layout.fillWidth: true
-                    spacing: 1
-                    Text {
-                        text: i18n("NixOS Generations")
-                        color: root.textColor
-                        font.pixelSize: Math.round(13 * root.fs); font.bold: true
-                    }
-                    Text {
-                        visible: plasmoid.configuration.showFlakeSection && root.flakePath !== ""
-                        text: root.isCheckingFlake
-                            ? i18n("Checking flake updates…")
-                            : (root.flakeUpdates.length > 0
-                                ? (root.flakeUpdates.length === 1
-                                    ? i18n("1 flake update available")
-                                    : i18n("%1 flake updates available").arg(root.flakeUpdates.length))
-                                : (root.lastFlakeCheckTime
-                                    ? i18n("Flake up-to-date · %1").arg(root.lastFlakeCheckTime)
-                                    : i18n("Flake up-to-date")))
-                        color: root.flakeUpdates.length > 0 ? "#cc88ff" : Qt.rgba(root.textColor.r, root.textColor.g, root.textColor.b, 0.5)
-                        font.pixelSize: Math.round(9 * root.fs)
-                        Behavior on color { ColorAnimation { duration: 300 } }
-                    }
-                }
-
-                // Custom command buttons
-                RowLayout {
-                    visible: plasmoid.configuration.showCommandButtons
-                    spacing: 4
-
-                    // Update command button
-                    Rectangle {
-                        visible: root.updateCmd !== ""
-                        radius: 5
-                        width: updateCmdLabel.implicitWidth + 14
-                        height: 24
-                        color: updateCmdArea.containsMouse
-                            ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.25)
-                            : Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.12)
-                        border.color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.5)
-                        border.width: 1
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        RowLayout {
-                            anchors.centerIn: parent
-                            spacing: 4
-                            Kirigami.Icon {
-                                source: "system-software-update"
-                                implicitWidth: 12; implicitHeight: 12
-                                color: root.accentColor
-                            }
-                            Text {
-                                id: updateCmdLabel
-                                text: root.updateCmd
-                                color: root.accentColor
-                                font.pixelSize: Math.round(9 * root.fs); font.bold: true
-                            }
-                        }
-
-                        MouseArea {
-                            id: updateCmdArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.runCustomCommand(root.updateCmd, root.updateCmd)
-                        }
-
-                        ToolTip.text: i18n("Run: %1").arg(root.updateCmd)
-                        ToolTip.visible: updateCmdArea.containsMouse
-                        ToolTip.delay: 600
-                    }
-
-                    // Redeploy command button
-                    Rectangle {
-                        visible: root.redeployCmd !== ""
-                        radius: 5
-                        width: redeployCmdLabel.implicitWidth + 14
-                        height: 24
-                        color: redeployCmdArea.containsMouse
-                            ? Qt.rgba(0.5, 0.85, 0.3, 0.25)
-                            : Qt.rgba(0.5, 0.85, 0.3, 0.12)
-                        border.color: Qt.rgba(0.5, 0.85, 0.3, 0.55)
-                        border.width: 1
-                        Behavior on color { ColorAnimation { duration: 120 } }
-
-                        RowLayout {
-                            anchors.centerIn: parent
-                            spacing: 4
-                            Kirigami.Icon {
-                                source: "run-build"
-                                implicitWidth: 12; implicitHeight: 12
-                                color: "#88dd55"
-                            }
-                            Text {
-                                id: redeployCmdLabel
-                                text: root.redeployCmd
-                                color: "#88dd55"
-                                font.pixelSize: Math.round(9 * root.fs); font.bold: true
-                            }
-                        }
-
-                        MouseArea {
-                            id: redeployCmdArea
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: root.runCustomCommand(root.redeployCmd, root.redeployCmd)
-                        }
-
-                        ToolTip.text: i18n("Run: %1").arg(root.redeployCmd)
-                        ToolTip.visible: redeployCmdArea.containsMouse
-                        ToolTip.delay: 600
-                    }
-                }
-
-                // Refresh button
-                ToolButton {
-                    icon.name: root.isLoadingGens ? "process-working" : "view-refresh"
-                    ToolTip.text: i18n("Refresh generations list")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 600
-                    enabled: !root.isLoadingGens
-                    opacity: enabled ? 1.0 : 0.4
-                    implicitWidth: 28; implicitHeight: 28
-                    onClicked: root.refreshGenerations()
-                }
-
-                // Check flake updates button
-                ToolButton {
-                    visible: plasmoid.configuration.showFlakeSection && root.flakePath !== ""
-                    icon.name: "network-connect"
-                    ToolTip.text: i18n("Check flake lock for updates")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 600
-                    enabled: !root.isCheckingFlake
-                    opacity: enabled ? 1.0 : 0.4
-                    implicitWidth: 28; implicitHeight: 28
-                    onClicked: root.checkFlakeUpdates()
-                }
-            }
-
-            // ── Toast area ────────────────────────────────────────────────────
-            Repeater {
-                model: root.toasts
-                delegate: Rectangle {
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: toastLayout.implicitHeight + 12
-                    radius: 5
-                    color: modelData.err ? Qt.rgba(1,0.2,0.2,0.15) : Qt.rgba(0.2,0.9,0.2,0.12)
-                    border.color: modelData.err ? "#ff5555" : "#55cc55"
-                    border.width: 1
-                    clip: true
-
-                    RowLayout {
-                        id: toastLayout
-                        anchors.fill: parent; anchors.margins: 6
-                        spacing: 6
-                        Kirigami.Icon {
-                            source: modelData.err ? "dialog-error" : "dialog-ok"
-                            implicitWidth: 14; implicitHeight: 14
-                            color: modelData.err ? "#ff5555" : "#55cc55"
-                            Layout.alignment: Qt.AlignTop
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            text: modelData.msg
-                            color: root.textColor
-                            font.pixelSize: Math.round(9 * root.fs)
-                            wrapMode: Text.Wrap
-                            maximumLineCount: 6
-                            elide: Text.ElideRight
-                        }
-                        ToolButton {
-                            visible: modelData.err
-                            icon.name: "edit-copy"
-                            implicitWidth: 18; implicitHeight: 18
-                            Layout.alignment: Qt.AlignTop
-                            ToolTip.text: i18n("Copy error message")
-                            ToolTip.visible: hovered
-                            ToolTip.delay: 600
-                            onClicked: root.copyToClipboard(modelData.msg)
-                        }
-                        ToolButton {
-                            icon.name: "window-close"
-                            implicitWidth: 18; implicitHeight: 18
-                            Layout.alignment: Qt.AlignTop
-                            onClicked: {
-                                var arr = root.toasts.slice()
-                                arr.splice(index, 1)
-                                root.toasts = arr
-                            }
-                        }
-                    }
-                }
-            }
-
-            // ── Busy indicator bar ────────────────────────────────────────────
-            Rectangle {
-                Layout.fillWidth: true
-                height: root.isBusy ? 28 : 0
-                clip: true
-                radius: 5
-                color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.12)
-                border.color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.3)
-                border.width: 1
-                Behavior on height { NumberAnimation { duration: 200 } }
-
-                RowLayout {
-                    anchors.fill: parent; anchors.margins: 6
-                    spacing: 6
-                    Kirigami.Icon {
-                        id: busyBarSpinner
-                        source: Qt.resolvedUrl("nixos-logo.svg")
-                        color: root.accentColor
-                        visible: root.isBusy
-                        implicitWidth: 18; implicitHeight: 18
-                        RotationAnimation on rotation {
-                            running: busyBarSpinner.visible
-                            from: 0; to: 360
-                            duration: 1400
-                            loops: Animation.Infinite
-                        }
-                    }
-                    Text {
-                        text: actionSource.actionType === "delete"
-                            ? i18n("Deleting generation %1…").arg(actionSource.actionGenNum)
-                            : i18n("Switching to generation %1…").arg(actionSource.actionGenNum)
-                        color: root.textColor; font.pixelSize: Math.round(9 * root.fs)
-                    }
-                }
-            }
-
-            // ── Flake updates bar ─────────────────────────────────────────────
-            Rectangle {
-                Layout.fillWidth: true
-                height: (plasmoid.configuration.showFlakeSection && root.flakeUpdates.length > 0) ? 30 : 0
-                clip: true; radius: 5
-                color: Qt.rgba(0.7,0.4,1,0.12)
-                border.color: Qt.rgba(0.7,0.4,1,0.3); border.width: 1
-                Behavior on height { NumberAnimation { duration: 250 } }
-                visible: height > 0
-
-                RowLayout {
-                    anchors.fill: parent; anchors.leftMargin: 8; anchors.rightMargin: 8
-                    spacing: 6
-                    Kirigami.Icon { source: "update-none"; implicitWidth: 14; implicitHeight: 14; color: "#cc88ff" }
-                    Text {
-                        Layout.fillWidth: true
-                        text: root.flakeUpdates.length === 1
-                            ? i18n("1 flake input has available updates")
-                            : i18n("%1 flake inputs have available updates").arg(root.flakeUpdates.length)
-                        color: root.textColor; font.pixelSize: Math.round(9 * root.fs); font.bold: true
-                    }
-                    Button {
-                        text: i18n("Details")
-                        flat: true
-                        implicitHeight: 22
-                        font.pixelSize: Math.round(9 * root.fs)
-                        onClicked: flakePopup.open()
-                    }
-                }
-            }
-
-            // ── Generations list ──────────────────────────────────────────────
-            Item {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-
-                ListView {
-                    id: genListView
-                    anchors.fill: parent
-                    model: root.generations
-                    clip: true
-                    spacing: 0
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                    delegate: Item {
-                        id: genDelegate
-                        width: genListView.width
-                        height: isExpanded ? headerH + detailsH + 8 : headerH
-                        readonly property bool isExpanded: modelData.number === root.selectedGenNum
-                        readonly property int  headerH: 44
-                        readonly property int  detailsH: 280
-
-                        Behavior on height { NumberAnimation { duration: 220; easing.type: Easing.InOutQuad } }
-
-                        // Timeline track
-                        Rectangle {
-                            anchors.left: parent.left; anchors.leftMargin: 18
-                            anchors.top: parent.top; anchors.bottom: parent.bottom
-                            width: 2
-                            color: (modelData.booted || modelData.active)
-                                ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.5)
-                                : Qt.rgba(root.timelineColor.r, root.timelineColor.g, root.timelineColor.b, 0.2)
-                        }
-
-                        // Node dot
-                        Rectangle {
-                            id: nodeDot
-                            anchors.left: parent.left; anchors.leftMargin: 13
-                            anchors.top: parent.top; anchors.topMargin: 14
-                            width: 12; height: 12; radius: 6
-                            color: (modelData.booted || modelData.active) ? root.accentColor : root.timelineColor
-                            border.color: Qt.rgba(color.r, color.g, color.b, 0.4)
-                            border.width: 3
-
-                            // Pulse ring for booted
-                            Rectangle {
-                                anchors.centerIn: parent
-                                width: 22; height: 22; radius: 11
-                                color: "transparent"
-                                border.color: nodeDot.color; border.width: 1
-                                visible: modelData.booted
-
-                                SequentialAnimation on opacity {
-                                    loops: Animation.Infinite
-                                    NumberAnimation { from: 0.8; to: 0.1; duration: 1600; easing.type: Easing.InOutSine }
-                                    NumberAnimation { from: 0.1; to: 0.8; duration: 1600; easing.type: Easing.InOutSine }
-                                }
-                            }
-                        }
-
-                        // Card area
-                        Rectangle {
-                            id: card
-                            anchors {
-                                left: nodeDot.right; leftMargin: 10
-                                right: parent.right; rightMargin: 4
-                                top: parent.top; topMargin: 3
-                                bottom: parent.bottom; bottomMargin: 3
-                            }
-                            radius: 6
-                            color: genDelegate.isExpanded
-                                ? Qt.rgba(1,1,1,0.07)
-                                : (cardHover.containsMouse ? Qt.rgba(1,1,1,0.04) : "transparent")
-                            border.color: genDelegate.isExpanded
-                                ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.25)
-                                : "transparent"
-                            border.width: 1
-                            clip: true
-
-                            MouseArea {
-                                id: cardHover
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (root.selectedGenNum === modelData.number) {
-                                        root.selectedGenNum = -1
-                                    } else {
-                                        root.loadGenDetails(modelData.number)
-                                    }
-                                }
-                            }
-
-                            // Header row
-                            RowLayout {
-                                id: headerRow
-                                anchors { left: parent.left; right: parent.right; top: parent.top }
-                                anchors.margins: 8
-                                height: genDelegate.headerH - 6
-                                spacing: 6
-
-                                // Gen number
-                                Text {
-                                    text: "#" + modelData.number
-                                    color: (modelData.booted || modelData.active) ? root.accentColor : root.textColor
-                                    font.pixelSize: Math.round(12 * root.fs); font.bold: true
-                                    opacity: (modelData.booted || modelData.active) ? 1.0 : 0.85
-                                }
-
-                                // Timestamp
-                                Text {
-                                    text: modelData.timestamp
-                                    color: root.textColor
-                                    font.pixelSize: Math.round(9 * root.fs)
-                                    opacity: 0.45
-                                    Layout.fillWidth: true
-                                    elide: Text.ElideRight
-                                }
-
-                                // Booted and Active status pills
-                                RowLayout {
-                                    spacing: 4
-
-                                    // Booted pill
-                                    Rectangle {
-                                        visible: modelData.booted
-                                        color: Qt.rgba(46/255, 204/255, 113/255, 0.15)
-                                        border.color: "#2ecc71"; border.width: 1
-                                        radius: 4; width: 52; height: 17
-
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: i18n("Booted")
-                                            color: "#2ecc71"
-                                            font.pixelSize: Math.round(8 * root.fs); font.bold: true
-                                        }
-                                    }
-
-                                    // Next Boot / Active pill
-                                    Rectangle {
-                                        visible: modelData.active && !modelData.booted
-                                        color: Qt.rgba(230/255, 126/255, 34/255, 0.15)
-                                        border.color: "#e67e22"; border.width: 1
-                                        radius: 4; width: 64; height: 17
-
-                                        Text {
-                                            anchors.centerIn: parent
-                                            text: i18n("Next Boot")
-                                            color: "#e67e22"
-                                            font.pixelSize: Math.round(8 * root.fs); font.bold: true
-                                        }
-                                    }
-                                }
-
-                                // Expand chevron – always visible
-                                Rectangle {
-                                    width: 22; height: 22; radius: 4
-                                    color: genDelegate.isExpanded
-                                        ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.18)
-                                        : (cardHover.containsMouse ? Qt.rgba(1,1,1,0.08) : "transparent")
-                                    Behavior on color { ColorAnimation { duration: 120 } }
-
-                                    Kirigami.Icon {
-                                        anchors.centerIn: parent
-                                        source: genDelegate.isExpanded ? "arrow-up" : "arrow-down"
-                                        implicitWidth: 14; implicitHeight: 14
-                                        color: genDelegate.isExpanded ? root.accentColor : root.textColor
-                                        opacity: genDelegate.isExpanded ? 1.0 : (cardHover.containsMouse ? 0.8 : 0.5)
-                                        Behavior on opacity { NumberAnimation { duration: 120 } }
-                                    }
-                                }
-                            }
-
-                            // ── Expanded details ──────────────────────────────
-                            ColumnLayout {
-                                visible: genDelegate.isExpanded
-                                opacity: genDelegate.isExpanded ? 1.0 : 0.0
-                                Behavior on opacity { NumberAnimation { duration: 180 } }
-                                anchors {
-                                    left: parent.left; right: parent.right
-                                    top: headerRow.bottom; topMargin: 2
-                                    bottom: parent.bottom; bottomMargin: 6
-                                }
-                                anchors.leftMargin: 8; anchors.rightMargin: 8
-                                spacing: 6
-
-                                // System info row
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 16
-
-                                    Column {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-                                        Text {
-                                            text: i18n("Kernel")
-                                            color: root.textColor; opacity: 0.4
-                                            font.pixelSize: Math.round(8 * root.fs)
-                                        }
-                                        Text {
-                                            text: root.detailsCache[modelData.number]
-                                                ? root.detailsCache[modelData.number].kernelVer : "—"
-                                            color: root.textColor
-                                            font.pixelSize: Math.round(10 * root.fs); font.bold: true
-                                            opacity: 0.9
-                                        }
-                                    }
-
-                                    Column {
-                                        Layout.fillWidth: true
-                                        spacing: 1
-                                        Text {
-                                            text: i18n("NixOS Version")
-                                            color: root.textColor; opacity: 0.4
-                                            font.pixelSize: Math.round(8 * root.fs)
-                                        }
-                                        Text {
-                                            text: root.detailsCache[modelData.number]
-                                                ? root.detailsCache[modelData.number].nixosVer : "—"
-                                            color: root.textColor
-                                            font.pixelSize: Math.round(10 * root.fs); font.bold: true
-                                            opacity: 0.9
-                                            elide: Text.ElideRight
-                                            width: parent.parent ? parent.parent.width * 0.45 : 80
-                                        }
-                                    }
-
-                                    // Loading spinner for details – rotating NixOS logo
-                                    Kirigami.Icon {
-                                        id: detailsSpinner
-                                        source: Qt.resolvedUrl("nixos-logo.svg")
-                                        color: root.accentColor
-                                        visible: root.isLoadingDetails && genDelegate.isExpanded
-                                            && !root.detailsCache[modelData.number]
-                                        implicitWidth: 20; implicitHeight: 20
-                                        RotationAnimation on rotation {
-                                            running: detailsSpinner.visible
-                                            from: 0; to: 360
-                                            duration: 1400
-                                            loops: Animation.Infinite
-                                        }
-                                    }
-                                }
-
-                                // Actions row: rollback + optional delete
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 6
-
-                                    Button {
-                                        Layout.fillWidth: true
-                                        text: modelData.booted
-                                            ? i18n("✓ Currently booted")
-                                            : (modelData.active
-                                                ? i18n("⟳ Active – reboot to apply")
-                                                : i18n("⬆ Boot into generation %1").arg(modelData.number))
-                                        enabled: !modelData.booted && !modelData.active && !root.isBusy
-                                        implicitHeight: 28
-                                        font.pixelSize: Math.round(9 * root.fs); font.bold: true
-                                        ToolTip.text: i18n("Switches the system profile to generation %1 and updates the bootloader entry. You must reboot to activate it.").arg(modelData.number)
-                                        ToolTip.visible: hovered
-                                        ToolTip.delay: 400
-                                        onClicked: root.requestAction(modelData.number, "rollback")
-
-                                        background: Rectangle {
-                                            radius: 4
-                                            color: parent.enabled
-                                                ? (parent.hovered
-                                                    ? Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.28)
-                                                    : Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.15))
-                                                : Qt.rgba(1,1,1,0.04)
-                                            border.color: parent.enabled ? root.accentColor : Qt.rgba(1,1,1,0.1)
-                                            border.width: 1
-                                        }
-                                        contentItem: RowLayout {
-                                            anchors.centerIn: parent; spacing: 4
-                                            Kirigami.Icon {
-                                                source: modelData.booted ? "dialog-ok" : (modelData.active ? "dialog-ok-apply" : "system-reboot")
-                                                implicitWidth: 12; implicitHeight: 12
-                                                color: root.textColor
-                                                opacity: parent.parent.enabled ? 0.8 : 0.35
-                                            }
-                                            Text {
-                                                text: parent.parent.text
-                                                color: parent.parent.enabled ? root.textColor : Qt.rgba(root.textColor.r, root.textColor.g, root.textColor.b, 0.4)
-                                                font: parent.parent.font
-                                                horizontalAlignment: Text.AlignHCenter
-                                                verticalAlignment: Text.AlignVCenter
-                                            }
-                                        }
-                                    }
-
-                                    // Delete button (optional)
-                                    Button {
-                                        visible: plasmoid.configuration.showDeleteButton && !modelData.active && !modelData.booted
-                                        enabled: !root.isBusy && !modelData.active && !modelData.booted
-                                        implicitWidth: 28; implicitHeight: 26
-                                        ToolTip.text: i18n("Delete this generation permanently")
-                                        ToolTip.visible: hovered
-                                        ToolTip.delay: 600
-                                        onClicked: root.requestAction(modelData.number, "delete")
-
-                                        background: Rectangle {
-                                            radius: 4
-                                            color: parent.hovered ? Qt.rgba(1,0.2,0.2,0.25) : Qt.rgba(1,0.2,0.2,0.1)
-                                            border.color: "#ff5555"; border.width: 1
-                                        }
-                                        contentItem: Kirigami.Icon {
-                                            source: "edit-delete"
-                                            implicitWidth: 14; implicitHeight: 14
-                                            color: "#ff5555"
-                                            anchors.centerIn: parent
-                                        }
-                                    }
-                                }
-
-                                // Package diff section
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 6
-
-                                    Text {
-                                        text: {
-                                            const isBooted = modelData.booted
-                                            const prev = root.getPreviousGen(modelData.number)
-                                            if (isBooted) {
-                                                 return prev ? i18n("Changes vs. previous (#%1)").arg(prev) : i18n("Changes vs. previous")
-                                            } else {
-                                                return root.diffMode === "booted"
-                                                    ? i18n("Changes vs. booted (#%1)").arg(root.bootedGenNum)
-                                                    : (prev ? i18n("Changes vs. previous (#%1)").arg(prev) : i18n("Changes vs. previous"))
-                                            }
-                                        }
-                                        color: root.textColor
-                                        font.pixelSize: Math.round(9 * root.fs); font.bold: true
-                                        opacity: 0.5
-                                    }
-
-                                    ToolButton {
-                                        visible: !modelData.booted && root.getPreviousGen(modelData.number) !== null
-                                        icon.name: "document-compare"
-                                        implicitWidth: 20; implicitHeight: 20
-                                        ToolTip.text: root.diffMode === "booted" ? i18n("Compare vs. previous generation") : i18n("Compare vs. booted generation")
-                                        ToolTip.visible: hovered
-                                        onClicked: {
-                                            root.diffMode = (root.diffMode === "booted" ? "prev" : "booted")
-                                            // Clear details cache for this generation to force reload with new comparison base
-                                            var cache = Object.assign({}, root.detailsCache)
-                                            delete cache[modelData.number]
-                                            root.detailsCache = cache
-                                            root.loadGenDetails(modelData.number)
-                                        }
-                                    }
-
-                                    // diff count badge
-                                    Rectangle {
-                                        visible: root.detailsCache[modelData.number]
-                                            && root.detailsCache[modelData.number].diff.length > 0
-                                        width: diffCountLabel.implicitWidth + 8; height: 14; radius: 7
-                                        color: Qt.rgba(root.accentColor.r, root.accentColor.g, root.accentColor.b, 0.2)
-                                        border.color: root.accentColor; border.width: 1
-
-                                        Text {
-                                            id: diffCountLabel
-                                            anchors.centerIn: parent
-                                            text: root.detailsCache[modelData.number]
-                                                ? root.detailsCache[modelData.number].diff.length : "0"
-                                            color: root.accentColor
-                                            font.pixelSize: Math.round(8 * root.fs); font.bold: true
-                                        }
-                                    }
-
-                                    Item { Layout.fillWidth: true }
-
-                                    // Filter field
-                                    TextField {
-                                        id: filterField
-                                        visible: plasmoid.configuration.diffFilterEnabled
-                                            && root.detailsCache[modelData.number]
-                                            && root.detailsCache[modelData.number].diff.length > 0
-                                        implicitWidth: 110; implicitHeight: 20
-                                        font.pixelSize: Math.round(8 * root.fs)
-                                        placeholderText: i18n("Filter…")
-                                        leftPadding: 6; rightPadding: 6
-                                        onTextChanged: root.diffFilter = text
-                                        background: Rectangle {
-                                            radius: 4
-                                            color: Qt.rgba(1,1,1,0.06)
-                                            border.color: Qt.rgba(1,1,1,0.12); border.width: 1
-                                        }
-                                        color: root.textColor
-                                    }
-                                }
-
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    radius: 4
-                                    color: Qt.rgba(0,0,0,0.18)
-                                    border.color: Qt.rgba(1,1,1,0.05); border.width: 1
-                                    clip: true
-
-                                    ListView {
-                                        id: diffView
-                                        anchors.fill: parent; anchors.margins: 4
-                                        clip: true; spacing: 2
-                                        ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                                        model: {
-                                            if (!root.detailsCache[modelData.number]) return []
-                                            const all = root.detailsCache[modelData.number].diff
-                                            const f   = root.diffFilter.toLowerCase()
-                                            return f ? all.filter(d => d.name.toLowerCase().indexOf(f) !== -1) : all
-                                        }
-
-                                        // Empty state
-                                        Text {
-                                            anchors.centerIn: parent
-                                            visible: diffView.count === 0
-                                            text: root.isLoadingDetails && !root.detailsCache[modelData.number]
-                                                ? i18n("Loading diff…")
-                                                : (root.diffFilter ? i18n("No matches") : i18n("No package changes"))
-                                            color: root.textColor; font.pixelSize: Math.round(9 * root.fs)
-                                            opacity: 0.4
-                                        }
-
-                                        delegate: RowLayout {
-                                            width: diffView.width
-                                            height: 18
-                                            spacing: 5
-
-                                            Rectangle {
-                                                width: 14; height: 14; radius: 3
-                                                color: modelData.type === "added"
-                                                    ? Qt.rgba(0.2,0.85,0.2,0.18)
-                                                    : (modelData.type === "removed"
-                                                        ? Qt.rgba(0.85,0.2,0.2,0.18)
-                                                        : Qt.rgba(0.85,0.6,0.2,0.18))
-                                                border.color: modelData.type === "added" ? "#55cc55"
-                                                    : (modelData.type === "removed" ? "#ff5555" : "#ffaa22")
-                                                border.width: 0.5
-
-                                                Text {
-                                                    anchors.centerIn: parent
-                                                    text: modelData.type === "added" ? "+" : (modelData.type === "removed" ? "−" : "~")
-                                                    color: parent.border.color
-                                                    font.pixelSize: Math.round(8 * root.fs); font.bold: true
-                                                }
-                                            }
-
-                                            Text {
-                                                text: modelData.name
-                                                color: root.textColor
-                                                font.pixelSize: Math.round(9 * root.fs); font.bold: true
-                                                elide: Text.ElideRight
-                                                Layout.fillWidth: true
-                                            }
-
-                                            Text {
-                                                text: modelData.type === "added"
-                                                    ? modelData.newVersion
-                                                    : (modelData.type === "removed"
-                                                        ? modelData.oldVersion
-                                                        : modelData.oldVersion + " → " + modelData.newVersion)
-                                                color: root.textColor; font.pixelSize: Math.round(8 * root.fs)
-                                                opacity: 0.55; elide: Text.ElideRight
-                                                Layout.maximumWidth: 110
-                                            }
-
-                                            Text {
-                                                visible: modelData.size !== ""
-                                                text: modelData.size
-                                                color: root.textColor; font.pixelSize: Math.round(7 * root.fs)
-                                                opacity: 0.35; elide: Text.ElideRight
-                                                Layout.maximumWidth: 60
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Loading overlay – rotating NixOS logo
-                Kirigami.Icon {
-                    id: mainSpinner
-                    anchors.centerIn: parent
-                    source: Qt.resolvedUrl("nixos-logo.svg")
-                    color: root.accentColor
-                    visible: root.isLoadingGens && root.generations.length === 0
-                    width: 64; height: 64
-                    RotationAnimation on rotation {
-                        running: mainSpinner.visible
-                        from: 0; to: 360
-                        duration: 1400
-                        loops: Animation.Infinite
-                    }
-                }
-
-                // Empty state
-                Column {
-                    anchors.centerIn: parent
-                    visible: root.generations.length === 0 && !root.isLoadingGens
-                    spacing: 8
-
-                    Kirigami.Icon {
-                        source: "dialog-warning"
-                        implicitWidth: 36; implicitHeight: 36
-                        opacity: 0.35
-                        anchors.horizontalCenter: parent.horizontalCenter
-                    }
-                    Text {
-                        text: i18n("No generations found.\nCheck /nix/var/nix/profiles/ exists\nand the widget has read access.")
-                        color: root.textColor; font.pixelSize: Math.round(10 * root.fs)
-                        opacity: 0.4; horizontalAlignment: Text.AlignHCenter
-                        wrapMode: Text.WordWrap; width: 240
-                    }
-                    Button {
-                        text: i18n("Retry")
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        font.pixelSize: Math.round(9 * root.fs)
-                        onClicked: root.refreshGenerations()
-                    }
-                }
-            }
+        onFilterChanged: t => root.diffFilter = t
+        onRunCommand: (cmd, label) => root.runCustomCommand(cmd, label)
+        onCopyToClipboard: t => root.copyToClipboard(t)
+        onDismissToast: function (idx) {
+            var arr = root.toasts.slice();
+            arr.splice(idx, 1);
+            root.toasts = arr;
         }
-
-        // ── Flake updates popup ───────────────────────────────────────────────
-        Popup {
-            id: flakePopup
-            anchors.centerIn: parent
-            width: Math.min(400, parent.width - 24)
-            height: Math.min(340, parent.height - 48)
-            modal: true; focus: true
-            closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
-
-            background: Rectangle {
-                radius: 10
-                color: plasmoid.configuration.showBg
-                    ? (plasmoid.configuration.bgColor || "#d90d0f1a")
-                    : Kirigami.Theme.backgroundColor
-                border.color: Qt.rgba(1,1,1,0.12); border.width: 1
-            }
-
-            ColumnLayout {
-                anchors.fill: parent; anchors.margins: 12
-                spacing: 8
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Kirigami.Icon { source: "update-none"; implicitWidth: 18; implicitHeight: 18; color: "#cc88ff" }
-                    Text {
-                        text: i18n("Pending Flake Lock Updates")
-                        color: root.textColor; font.pixelSize: Math.round(12 * root.fs); font.bold: true
-                    }
-                    Item { Layout.fillWidth: true }
-                    ToolButton {
-                        icon.name: "window-close"
-                        onClicked: flakePopup.close()
-                        implicitWidth: 24; implicitHeight: 24
-                    }
-                }
-
-                Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(1,1,1,0.1) }
-
-                ListView {
-                    Layout.fillWidth: true; Layout.fillHeight: true
-                    clip: true; spacing: 6
-                    model: root.flakeUpdates
-                    ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
-
-                    Text {
-                        anchors.centerIn: parent
-                        visible: root.flakeUpdates.length === 0
-                        text: i18n("No updates available")
-                        color: root.textColor; font.pixelSize: Math.round(10 * root.fs); opacity: 0.4
-                    }
-
-                    delegate: Rectangle {
-                        width: parent ? parent.width : 0
-                        height: 42; radius: 5
-                        color: Qt.rgba(1,1,1,0.03)
-                        border.color: Qt.rgba(1,1,1,0.06); border.width: 1
-
-                        RowLayout {
-                            anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10
-                            spacing: 10
-                            Column {
-                                Layout.fillWidth: true; spacing: 2
-                                Text {
-                                    text: modelData.input
-                                    color: root.textColor
-                                    font.pixelSize: Math.round(10 * root.fs); font.bold: true
-                                }
-                                Text {
-                                    text: modelData.oldDate + "  →  " + modelData.newDate
-                                    color: root.textColor; font.pixelSize: Math.round(8 * root.fs); opacity: 0.45
-                                }
-                            }
-                            Column {
-                                spacing: 2
-                                Text {
-                                    text: modelData.oldRev
-                                    color: root.textColor; font.pixelSize: Math.round(8 * root.fs)
-                                    opacity: 0.5; font.family: "monospace"
-                                }
-                                Text {
-                                    text: modelData.newRev
-                                    color: "#cc88ff"; font.pixelSize: Math.round(8 * root.fs)
-                                    font.bold: true; font.family: "monospace"
-                                }
-                            }
-                            ToolButton {
-                                visible: modelData.url && modelData.url !== ""
-                                icon.name: "internet-web-browser"
-                                implicitWidth: 26; implicitHeight: 26
-                                ToolTip.text: modelData.url || ""
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 400
-                                onClicked: Qt.openUrlExternally(modelData.url)
-                            }
-                        }
-                    }
-                }
-
-                Text {
-                    text: i18n("Run 'nix flake update' in your config directory to apply.")
-                    color: root.textColor; font.pixelSize: Math.round(8 * root.fs); opacity: 0.38
-                    horizontalAlignment: Text.AlignHCenter; Layout.fillWidth: true
-                    wrapMode: Text.WordWrap
-                }
-            }
-        }
+        onHashRequested: (mode, input) => root.runHashProbe(mode, input)
+        onPopOutRequested: root.pinned = !root.pinned
+        onConfigureRequested: plasmoid.internalAction("configure").trigger()
+        isPopOutOpen: root.pinned
     }
 }

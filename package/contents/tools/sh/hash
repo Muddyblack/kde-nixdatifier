@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# Usage: hash <mode> <input>
+# Modes: url | github | file | store
+# Outputs one line: the hash, or "ERROR: <message>"
+mode="$1"
+input="$2"
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+case "$mode" in
+    url)
+        # nix-prefetch-url emits the sha256 on stdout; stderr has progress noise
+        result=$(nix-prefetch-url --type sha256 "$input" 2>/dev/null)
+        if [ -z "$result" ]; then
+            # fallback: try nix store prefetch-file (Nix 2.4+)
+            result=$(nix store prefetch-file --hash-type sha256 --json "$input" 2>/dev/null | grep -o '"hash":"[^"]*"' | cut -d'"' -f4)
+        fi
+        [ -n "$result" ] && echo "$result" || echo "ERROR: could not fetch URL"
+        ;;
+    zip)
+        # fetchzip / fetchTarball — unpack then hash
+        result=$(nix-prefetch-url --type sha256 --unpack "$input" 2>/dev/null)
+        [ -n "$result" ] && echo "$result" || echo "ERROR: could not fetch/unpack URL"
+        ;;
+    github)
+        # input format: owner/repo/rev  (rev can be tag or commit)
+        owner=$(echo "$input" | cut -d'/' -f1)
+        repo=$(echo "$input"  | cut -d'/' -f2)
+        rev=$(echo "$input"   | cut -d'/' -f3-)
+        if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$rev" ]; then
+            echo "ERROR: format must be owner/repo/rev"
+            exit 0
+        fi
+        url="https://github.com/${owner}/${repo}/archive/${rev}.tar.gz"
+        result=$(nix-prefetch-url --type sha256 --unpack "$url" 2>/dev/null)
+        [ -n "$result" ] && echo "$result" || echo "ERROR: could not fetch GitHub archive"
+        ;;
+    file)
+        if [ ! -f "$input" ]; then
+            echo "ERROR: file not found: $input"
+            exit 0
+        fi
+        sha256sum "$input" 2>/dev/null | awk '{print $1}'
+        ;;
+    store)
+        if [ ! -e "$input" ]; then
+            echo "ERROR: store path not found: $input"
+            exit 0
+        fi
+        nix-store -q --hash "$input" 2>/dev/null || echo "ERROR: nix-store query failed"
+        ;;
+    *)
+        echo "ERROR: unknown mode '$mode'"
+        ;;
+esac
+exit 0

@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# Usage: terminal <terminal-app> <work-dir> <command>
+# <terminal-app> may be empty — auto-detects from KDE/XDG defaults then PATH.
+term="$1"
+workdir="$2"
+cmd="$3"
+
+# ── Detect terminal if not specified ─────────────────────────────────────────
+if [ -z "$term" ]; then
+    kde_term=$(kreadconfig6 --file kdeglobals --group General --key TerminalApplication 2>/dev/null)
+    [ -z "$kde_term" ] && kde_term=$(kreadconfig5 --file kdeglobals --group General --key TerminalApplication 2>/dev/null)
+    xdg_term=$(xdg-mime query default x-scheme-handler/terminal 2>/dev/null | sed 's/\.desktop$//')
+    for candidate in "$kde_term" "$xdg_term" konsole kitty alacritty foot wezterm ghostty xterm; do
+        [ -n "$candidate" ] && command -v "$candidate" &>/dev/null && term="$candidate" && break
+    done
+    [ -z "$term" ] && term="xterm"
+fi
+
+# ── Pick the user's shell so aliases/functions are available ─────────────────
+user_shell=$(getent passwd "$USER" 2>/dev/null | cut -d: -f7)
+[ -z "$user_shell" ] && user_shell="$SHELL"
+[ -z "$user_shell" ] && user_shell="/bin/sh"
+shell_basename=$(basename "$user_shell")
+
+# Portable pause that works in zsh, bash and POSIX sh.
+# (zsh's `read` doesn't grok `-n1`; wait for Enter instead.)
+pause='printf "\n\033[2m── done · press Enter to close ──\033[0m "; IFS= read -r _ < /dev/tty || true'
+
+# Source the user's interactive rc so aliases like `update` / `upnix` are
+# present. Bare `-i` alone is sometimes insufficient depending on distro.
+case "$shell_basename" in
+    zsh)  rc_source='[ -r "$HOME/.zshrc"  ] && . "$HOME/.zshrc"  >/dev/null 2>&1 || true' ;;
+    bash) rc_source='[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc" >/dev/null 2>&1 || true' ;;
+    *)    rc_source='' ;;
+esac
+
+inner="cd \"$workdir\" 2>/dev/null; $rc_source; $cmd; $pause"
+shell_args=(-i -c "$inner")
+
+# ── Launch in terminal ────────────────────────────────────────────────────────
+case "$term" in
+    konsole|konsole-nkde)
+        konsole --workdir "$workdir" -e "$user_shell" "${shell_args[@]}" &
+        ;;
+    kitty)
+        kitty --directory "$workdir" "$user_shell" "${shell_args[@]}" &
+        ;;
+    foot)
+        foot --working-directory="$workdir" "$user_shell" "${shell_args[@]}" &
+        ;;
+    wezterm)
+        wezterm start --cwd "$workdir" -- "$user_shell" "${shell_args[@]}" &
+        ;;
+    alacritty)
+        alacritty --working-directory "$workdir" -e "$user_shell" "${shell_args[@]}" &
+        ;;
+    ghostty)
+        ghostty --working-directory="$workdir" -e "$user_shell" "${shell_args[@]}" &
+        ;;
+    xterm)
+        xterm -hold -e "$user_shell" "${shell_args[@]}" &
+        ;;
+    gnome-terminal|ptyxis)
+        "$term" --working-directory="$workdir" -- "$user_shell" "${shell_args[@]}" &
+        ;;
+    *)
+        "$term" -e "$user_shell" "${shell_args[@]}" &
+        ;;
+esac
+exit 0

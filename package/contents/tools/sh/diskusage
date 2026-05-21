@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# Usage: diskusage
+# Emits three lines separated by \x1e:
+#   [0] Total /nix/store size on disk (bytes)
+#   [1] Reclaimable via `nix-collect-garbage --dry-run` (bytes); "" if not computable
+#   [2] /nix filesystem free space (bytes)
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+# Total store size — fast, just walks the filesystem
+du -sb /nix/store 2>/dev/null | awk '{print $1}'
+printf '\x1e'
+
+# Reclaimable: parse `nix-collect-garbage --dry-run` output.
+# Output line looks like "would free 1.23 GiB" or "would free 524.00 MiB".
+nix-collect-garbage --dry-run 2>&1 \
+  | awk '
+      /[Ww]ould free|[Ww]ould delete/ {
+          for (i=1; i<=NF; i++) {
+              if ($i ~ /^[0-9.]+$/ && (i+1) <= NF) {
+                  v = $i; u = $(i+1);
+                  mult = 1
+                  if (u ~ /KiB|KB/) mult = 1024
+                  else if (u ~ /MiB|MB/) mult = 1024*1024
+                  else if (u ~ /GiB|GB/) mult = 1024*1024*1024
+                  else if (u ~ /TiB|TB/) mult = 1024*1024*1024*1024
+                  printf "%.0f", v * mult
+                  exit
+              }
+          }
+      }
+  '
+printf '\x1e'
+
+# Free space on the filesystem holding /nix
+df -B1 --output=avail /nix 2>/dev/null | tail -n1 | tr -d ' '
+exit 0

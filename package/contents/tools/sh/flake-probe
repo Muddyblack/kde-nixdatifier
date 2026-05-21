@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Usage: flake-probe <flake-dir>
+# Reads <flake-dir>/flake.lock, probes each root input's remote in parallel
+# and emits one TSV line per input:
+#
+#   name<TAB>status<TAB>currentRev<TAB>remoteRev<TAB>currentDate<TAB>url
+#
+# status:
+#   ok           — remoteRev differs from currentRev (update available)
+#   unchanged    — already on latest
+#   pinned       — no rev / unsupported source type (skip silently)
+#   unreachable  — git ls-remote failed or timed out
+set -u
+
+flake_dir="${1:-}"
+lock="$flake_dir/flake.lock"
+[ -r "$lock" ] || { echo "ERROR: cannot read $lock" >&2; exit 1; }
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+command -v jq  >/dev/null 2>&1 || { echo "ERROR: jq not on PATH"  >&2; exit 1; }
+command -v git >/dev/null 2>&1 || { echo "ERROR: git not on PATH" >&2; exit 1; }
+
+TIMEOUT="${FLAKE_PROBE_TIMEOUT:-12}"
+MAX_PARALLEL="${FLAKE_PROBE_PARALLEL:-8}"
+
+# Pull root inputs as TSV: name type owner repo url ref rev lastModified
+# Use '|' as field separator (tab is whitespace-class in IFS and collapses empty fields).
+inputs=$(jq -r '
+  .nodes.root.inputs as $ri
+  | ($ri | to_entries[]) as $e
+  | .nodes[($e.value | if type=="string" then . else .[0] end)] as $n
+  | select($n.locked != null and $n.original != null)
+  | [
+      $e.key,
+      ($n.original.type // ""),
+      ($n.original.owner // ""),
+      ($n.original.repo // ""),
+      ($n.original.url // ""),
+      ($n.original.ref // ""),
+      ($n.locked.rev // ""),
+      ($n.locked.lastModified // 0 | tostring)
+    ] | join("|")
+' "$lock" 2>/dev/null) || { echo "ERROR: failed to parse flake.lock" >&2; exit 1; }
+
+[ -z "$inputs" ] && exit 0
+
+probe_one() {
+    local name="$1" type="$2" owner="$3" repo="$4" url="$5" ref="$6" rev="$7" date="$8"
+    local remote_url=""
+
+    case "$type" in
+        github)    remote_url="https://github.com/${owner}/${repo}.git" ;;
+        gitlab)    remote_url="https://gitlab.com/${owner}/${repo}.git" ;;
+        sourcehut) remote_url="https://git.sr.ht/${owner}/${repo}" ;;
+        git)
+            remote_url="$url"
+            [[ "$remote_url" == git+* ]] && remote_url="${remote_url#git+}"
+            ;;
+        *)
+            printf '%s\t%s\t%s\t\t%s\t\n' "$name" "pinned" "$rev" "$date"
+            return
+            ;;
+    esac
+
+    if [ -z "$rev" ]; then
+        printf '%s\t%s\t%s\t\t%s\t%s\n' "$name" "pinned" "$rev" "$date" "$remote_url"
+        return
+    fi
+
+    local refs=()
+    if [ -n "$ref" ]; then
+        refs=("refs/heads/$ref" "refs/tags/$ref" "$ref")
+    else
+        refs=("HEAD")
+    fi
+
+    local remote_rev
+    remote_rev=$(timeout "$TIMEOUT" git \
+        ls-remote --quiet "$remote_url" "${refs[@]}" 2>/dev/null \
+        | awk 'NR==1 {print $1; exit}')
+
+    if [ -z "$remote_rev" ]; then
+        printf '%s\t%s\t%s\t\t%s\t%s\n' "$name" "unreachable" "$rev" "$date" "$remote_url"
+    elif [ "$remote_rev" = "$rev" ]; then
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "unchanged" "$rev" "$remote_rev" "$date" "$remote_url"
+    else
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "ok" "$rev" "$remote_rev" "$date" "$remote_url"
+    fi
+}
+
+# Concurrency throttle via a job slot
+running=0
+while IFS='|' read -r name type owner repo url ref rev date; do
+    [ -z "$name" ] && continue
+    probe_one "$name" "$type" "$owner" "$repo" "$url" "$ref" "$rev" "$date" &
+    running=$((running + 1))
+    if [ "$running" -ge "$MAX_PARALLEL" ]; then
+        wait -n 2>/dev/null || wait
+        running=$((running - 1))
+    fi
+done <<< "$inputs"
+
+wait
+exit 0

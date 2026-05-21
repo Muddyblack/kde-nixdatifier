@@ -15,30 +15,41 @@
         <entry name="maxGenerations" type="Int">
             <default>10</default>
         </entry>
+        <entry name="defaultView" type="String">
+            <!-- "timeline" | "updates" | "secrets" -->
+            <default>timeline</default>
+        </entry>
+        <entry name="enableHostDetect" type="Bool">
+            <default>true</default>
+        </entry>
 
         <!-- Custom Commands -->
-        <entry name="updateCommand" type="String">
-            <default>update</default>
-        </entry>
-        <entry name="redeployCommand" type="String">
-            <default>upnix</default>
+        <!-- JSON array: [{"label":"…","cmd":"…","color":"accent|green|red|default"},…] max 4 -->
+        <entry name="customCommands" type="String">
+            <default>[{"label":"update","cmd":"nix flake update"},{"label":"upnix","cmd":"upnix"}]</default>
         </entry>
         <entry name="showCommandButtons" type="Bool">
             <default>true</default>
         </entry>
         <entry name="commandTerminal" type="String">
-            <default>konsole</default>
+            <default></default>
         </entry>
 
         <!-- Rollback / Auth -->
         <entry name="usePkexec" type="Bool">
             <default>true</default>
         </entry>
+        <entry name="enableLiveSwitch" type="Bool">
+            <default>true</default>
+        </entry>
         <entry name="confirmBeforeRollback" type="Bool">
             <default>true</default>
         </entry>
+        <entry name="confirmBeforeDelete" type="Bool">
+            <default>true</default>
+        </entry>
         <entry name="showDeleteButton" type="Bool">
-            <default>false</default>
+            <default>true</default>
         </entry>
 
         <!-- Notifications -->
@@ -53,13 +64,24 @@
         <entry name="showFlakeSection" type="Bool">
             <default>true</default>
         </entry>
+        <entry name="secretsPath" type="String">
+            <!-- deployed secrets dir, e.g. /run/secrets — empty = auto-detect -->
+            <default></default>
+        </entry>
+        <entry name="secretsSourcePath" type="String">
+            <!-- encrypted source file, e.g. /etc/nixos/secrets/secrets.yaml -->
+            <default></default>
+        </entry>
         <entry name="diffFilterEnabled" type="Bool">
             <default>true</default>
         </entry>
 
         <!-- Appearance -->
-        <entry name="timelineColor" type="String">
+        <entry name="timelineColor" type="Color">
             <default>#9b5de5</default>
+        </entry>
+        <entry name="accentColor" type="Color">
+            <default>#b388ff</default>
         </entry>
         <entry name="fontScale" type="Double">
             <default>1.0</default>
@@ -68,24 +90,48 @@
             <default>true</default>
         </entry>
         <entry name="bgColor" type="String">
-            <default>#d90d0f1a</default>
+            <default>#800a0c14</default>
         </entry>
         <entry name="bgRadius" type="Double">
-            <default>12.0</default>
+            <default>14.0</default>
         </entry>
         <entry name="useSystemTextColor" type="Bool">
             <default>true</default>
         </entry>
-        <entry name="customTextColor" type="String">
+        <entry name="customTextColor" type="Color">
             <default>#ffffff</default>
         </entry>
+        <entry name="enableGlow" type="Bool">
+            <default>true</default>
+        </entry>
+        <entry name="iconStyle" type="String">
+            <default>colored</default>
+        </entry>
 
-        <!-- Compact panel icon style: "icon", "number", "both" -->
+        <!-- Diff view mode: "compact" | "detailed" -->
+        <entry name="diffViewMode" type="String">
+            <default>compact</default>
+        </entry>
+
+        <!-- Show per-package app icons in diff lists -->
+        <entry name="showPackageIcons" type="Bool">
+            <default>true</default>
+        </entry>
+
+        <!-- Compact panel icon style: "icon", "number", "both", "pill" -->
         <entry name="compactStyle" type="String">
             <default>icon</default>
         </entry>
         <entry name="compactShowBadge" type="Bool">
             <default>true</default>
+        </entry>
+
+        <!-- Remembered popup size -->
+        <entry name="popupWidth" type="Int">
+            <default>520</default>
+        </entry>
+        <entry name="popupHeight" type="Int">
+            <default>680</default>
         </entry>
     </group>
 </kcfg>

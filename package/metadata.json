@@ -9,12 +9,12 @@
         ],
         "Category": "System Information",
         "Description": "Visual timeline of NixOS generations, package diffs, rollback triggers, and flake update status.",
-        "Icon": "icon.png",
+        "Icon": "org.muddyblack.nixosGenerationExplorer",
         "Id": "org.muddyblack.nixosGenerationExplorer",
         "License": "MIT",
-        "Name": "NixOS Generation Explorer",
-        "Version": "2.0.0",
-        "Website": "https://github.com/muddyblack/KDE-PLASMA"
+        "Name": "nixdatifier",
+        "Version": "0.0.1-beta",
+        "Website": "https://github.com/Muddyblack/kde-nixdatifier"
     },
     "X-Plasma-API-Minimum-Version": "6.0"
 }

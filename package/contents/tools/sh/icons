@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# Output: one line per matched package  →  pkgname\ticonname
+# Searches all XDG application dirs for .desktop files, extracts Icon=,
+# and tries to match the desktop file's stem / Name= against the package names
+# passed as arguments (one per line on stdin, or as "$@").
+#
+# Usage: echo -e "firefox\ngoogle-chrome\nkate" | icons
+#        icons firefox google-chrome kate
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin"
+
+# Collect search dirs: system profile + XDG_DATA_DIRS + user local
+search_dirs=(
+  "/run/current-system/sw/share/applications"
+  "/nix/var/nix/profiles/default/share/applications"
+  "$HOME/.local/share/applications"
+  "$HOME/.nix-profile/share/applications"
+)
+
+# Also add anything in XDG_DATA_DIRS
+IFS_BAK="$IFS"; IFS=':'
+for d in $XDG_DATA_DIRS; do
+  [[ -d "$d/applications" ]] && search_dirs+=("$d/applications")
+done
+IFS="$IFS_BAK"
+
+# Read package names — from args or stdin
+if [[ $# -gt 0 ]]; then
+  pkgs=("$@")
+else
+  mapfile -t pkgs
+fi
+
+[[ ${#pkgs[@]} -eq 0 ]] && exit 0
+
+# Build icon map: lowercase stem -> icon name
+declare -A icon_map
+
+for dir in "${search_dirs[@]}"; do
+  [[ -d "$dir" ]] || continue
+  while IFS= read -r -d '' f; do
+    stem="${f##*/}"
+    stem="${stem%.desktop}"
+    stem_lc="${stem,,}"
+    icon=""
+    while IFS= read -r line; do
+      [[ "$line" =~ ^Icon=(.+) ]] && { icon="${BASH_REMATCH[1]}"; break; }
+    done < "$f"
+    [[ -n "$icon" && -z "${icon_map[$stem_lc]+x}" ]] && icon_map["$stem_lc"]="$icon"
+  done < <(find "$dir" -maxdepth 1 -name "*.desktop" -print0 2>/dev/null)
+done
+
+# Match each requested package name against the icon map
+for pkg in "${pkgs[@]}"; do
+  [[ -z "$pkg" ]] && continue
+  pkg_lc="${pkg,,}"
+
+  # 1. Exact match on stem
+  if [[ -n "${icon_map[$pkg_lc]+x}" ]]; then
+    echo -e "$pkg\t${icon_map[$pkg_lc]}"
+    continue
+  fi
+
+  # 2. Stem contains pkg name (e.g. "org.kde.kate" contains "kate")
+  found=""
+  for key in "${!icon_map[@]}"; do
+    if [[ "$key" == *"$pkg_lc"* || "$pkg_lc" == *"$key"* ]]; then
+      found="${icon_map[$key]}"
+      break
+    fi
+  done
+
+  [[ -n "$found" ]] && echo -e "$pkg\t$found"
+done
+
+exit 0
