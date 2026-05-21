@@ -5,11 +5,8 @@
 <h1 align="center">Nixdatifier</h1>
 
 <p align="center">
-  <a href="https://www.opendesktop.org/p/2361250/">
-    <img src="https://img.shields.io/badge/KDE_Store-Download-blue?style=for-the-badge&logo=kde" alt="KDE Store Download" />
-  </a>
-  <a href="https://github.com/Muddyblack/kde-nixdatifier">
-    <img src="https://img.shields.io/badge/GitHub-Repository-black?style=for-the-badge&logo=github" alt="GitHub Repository" />
+  <a href="https://store.kde.org/p/2361250/">
+    <img src="https://img.shields.io/badge/KDE_Store-Download-1d99f3?style=for-the-badge&logo=kde&logoColor=white" alt="KDE Store Download" />
   </a>
   <img src="https://img.shields.io/badge/Made%20for-NixOS-5277C3?style=for-the-badge&logo=nixos&logoColor=white" alt="Made for NixOS" />
   <img src="https://img.shields.io/badge/Status-Beta-orange?style=for-the-badge" alt="Status: Beta" />
@@ -25,9 +22,15 @@
 A KDE Plasma 6 widget for NixOS to view system generations, package diffs, flake updates, and active secrets directly from the panel.
 
 <p align="center">
-  <img src="./readme/timeline_tab.png" width="32%" alt="Timeline Tab" />
-  <img src="./readme/updates_tab.png" width="32%" alt="Updates Tab" />
-  <img src="./readme/secrets_tab.png" width="32%" alt="Secrets Tab" />
+  <img src="./readme/timeline_tab.png" width="680" alt="Timeline Tab" />
+</p>
+
+<p align="center">
+  <img src="./readme/updates_tab.png" width="680" alt="Updates Tab" />
+</p>
+
+<p align="center">
+  <img src="./readme/secrets_tab.png" width="680" alt="Secrets Tab" />
 </p>
 
 ---
