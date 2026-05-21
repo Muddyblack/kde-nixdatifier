@@ -5,7 +5,7 @@
 <h1 align="center">Nixdatifier</h1>
 
 <p align="center">
-  <a href="https://store.kde.org/p/2361250/">
+  <a href="https://store.kde.org/p/2360222/">
     <img src="https://img.shields.io/badge/KDE_Store-Download-1d99f3?style=for-the-badge&logo=kde&logoColor=white" alt="KDE Store Download" />
   </a>
   <img src="https://img.shields.io/badge/Made%20for-NixOS-5277C3?style=for-the-badge&logo=nixos&logoColor=white" alt="Made for NixOS" />
