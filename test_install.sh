@@ -2,29 +2,31 @@
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-TEMP_DIR="/tmp/nixos-generation-explorer-test"
+METADATA="$HERE/package/metadata.json"
 TOOL=/run/current-system/sw/bin/kpackagetool6
-ID=org.muddyblack.nixosGenerationExplorerTest
 
 if [ ! -x "$TOOL" ]; then
     echo "kpackagetool6 not found at $TOOL" >&2
     exit 1
 fi
 
+ID="$(grep -oE '"Id":[[:space:]]*"[^"]+"' "$METADATA" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+NAME="$(grep -oE '"Name":[[:space:]]*"[^"]+"' "$METADATA" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+TEST_ID="${ID}Test"
+TEMP_DIR="/tmp/$(basename "$HERE")-test"
+
 rm -rf "$TEMP_DIR"
 cp -r "$HERE/package" "$TEMP_DIR"
 
-# Replace both the Id and Icon properties (which now use the widget ID)
-sed -i "s/org.muddyblack.nixosGenerationExplorer/$ID/g" "$TEMP_DIR/metadata.json"
-sed -i 's/"Name": "nixdatifier"/"Name": "nixdatifier (Test)"/g' "$TEMP_DIR/metadata.json"
+sed -i "s/$ID/$TEST_ID/g" "$TEMP_DIR/metadata.json"
+sed -i "s/\"Name\": \"$NAME\"/\"Name\": \"$NAME (Test)\"/g" "$TEMP_DIR/metadata.json"
 
-# Install the icon to the user's local hicolor icon theme directory
 ICON_DIR="$HOME/.local/share/icons/hicolor/256x256/apps"
 mkdir -p "$ICON_DIR"
-cp "$HERE/package/icon.png" "$ICON_DIR/$ID.png"
+cp "$HERE/package/icon.png" "$ICON_DIR/$TEST_ID.png"
 
 echo "Installing test version of the widget..."
-if "$TOOL" -t Plasma/Applet -l 2>/dev/null | grep -q "$ID"; then
+if "$TOOL" -t Plasma/Applet -l 2>/dev/null | grep -q "$TEST_ID"; then
     "$TOOL" -t Plasma/Applet -u "$TEMP_DIR" 2>/dev/null
     echo "Updated existing test install."
 else
@@ -33,10 +35,10 @@ else
 fi
 
 echo ""
-echo "=== Done: NixOS Generation Explorer (Test) ==="
-echo "Add it to your desktop/panel, or restart plasmashell if already added:"
+echo "=== Test Widget Installed! ==="
+echo "Add '$NAME (Test)' to your desktop/panel, or restart plasmashell if already added:"
 echo "  plasmashell --replace &"
 echo ""
 echo "To remove the test version:"
-echo "  $TOOL -t Plasma/Applet -r $ID"
-echo "  rm -f $HOME/.local/share/icons/hicolor/256x256/apps/$ID.png"
+echo "  $TOOL -t Plasma/Applet -r $TEST_ID"
+echo "  rm -f $ICON_DIR/$TEST_ID.png"

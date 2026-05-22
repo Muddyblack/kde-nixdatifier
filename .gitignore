@@ -1,5 +1,17 @@
+# Build artifacts
 *.plasmoid
+notes.md
+
+# Nix
+result
 .direnv/
 .envrc
-result
-notes.md
+
+# Editor junk
+*~
+*.swp
+.idea/
+.vscode/
+
+# System junk
+.DS_Store
