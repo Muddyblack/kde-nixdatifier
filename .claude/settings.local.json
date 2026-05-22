@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /mnt/projects/nixos-config/ -type f | grep -E \"\\\\.\\(nix|conf\\)\" | head -50)",
+      "Read(//mnt/projects/nixos-config/**)",
+      "Read(//nix/store/**)"
+    ]
+  }
+}

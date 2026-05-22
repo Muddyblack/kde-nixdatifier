@@ -24,12 +24,9 @@ Item {
     required property bool compactShowBadge
     required property string iconStyle
 
-    readonly property bool logoIsMask: iconStyle !== "colored" || compactRoot.flakeUpdates.length > 0
-    readonly property bool logoUseImage: iconStyle === "colored" && compactRoot.flakeUpdates.length === 0
+    readonly property bool logoIsMask: iconStyle !== "colored"
+    readonly property bool logoUseImage: iconStyle === "colored"
     readonly property color logoColor: {
-        if (compactRoot.flakeUpdates.length > 0) {
-            return "#cc88ff";
-        }
         if (iconStyle === "white") {
             return "#ffffff";
         }
