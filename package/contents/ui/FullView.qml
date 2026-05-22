@@ -91,6 +91,7 @@ Item {
     property bool isLoadingPairDiff: false
     property string diffViewMode: "compact"   // "compact" | "detailed"
     property var iconCache: ({})
+    property var metaCache: ({})
     property bool showPackageIcons: true
 
     // hash result pushed back from main: { value: string, isError: bool }
@@ -958,6 +959,7 @@ Item {
                             diffFilterEnabled: fullView.diffFilterEnabled
                             bootedGenNum: fullView.bootedGenNum
                             iconCache: fullView.iconCache
+                            metaCache: fullView.metaCache
                             showPackageIcons: fullView.showPackageIcons
                             iconStyle: fullView.iconStyle
                             allGenerations: fullView.generations
@@ -1164,11 +1166,15 @@ Item {
                                 id: updateRowMa
                                 anchors.fill: parent
                                 hoverEnabled: true
-                                cursorShape: (modelData.url && modelData.url !== "") ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                onClicked: if (modelData.url)
+                                // URLs are derived from flake.lock entries, which the user controls
+                                // — a malicious flake input could in principle store a file:// or
+                                // javascript: URL. Gate xdg-open to http(s).
+                                readonly property bool isSafeUrl: !!modelData.url && /^https?:\/\//i.test(modelData.url)
+                                cursorShape: isSafeUrl ? Qt.PointingHandCursor : Qt.ArrowCursor
+                                onClicked: if (isSafeUrl)
                                     Qt.openUrlExternally(modelData.url)
                                 ToolTip.text: modelData.url || ""
-                                ToolTip.visible: containsMouse && !!(modelData.url && modelData.url !== "")
+                                ToolTip.visible: containsMouse && isSafeUrl
                                 ToolTip.delay: 500
                             }
 
@@ -1908,6 +1914,7 @@ Item {
                                 fs: fullView.fs
                                 forceExpanded: fullView.diffViewMode === "detailed"
                                 iconCache: fullView.iconCache
+                                metaCache: fullView.metaCache
                                 showPackageIcons: fullView.showPackageIcons
                                 onCopyRequested: text => fullView.copyToClipboard(text)
                             }

@@ -22,6 +22,7 @@ Item {
     property bool diffFilterEnabled: true
     property int bootedGenNum: -1
     property var iconCache: ({})
+    property var metaCache: ({})
     property bool showPackageIcons: true
     property string iconStyle: "colored"
     // Full generations list, used to populate the right-click "Compare with…" menu.
@@ -812,6 +813,7 @@ Item {
                             fs: genDelegate.fs
                             forceExpanded: false
                             iconCache: genDelegate.iconCache
+                            metaCache: genDelegate.metaCache
                             showPackageIcons: genDelegate.showPackageIcons
                             onCopyRequested: t => genDelegate.copyToClipboard(t)
                         }

@@ -1,0 +1,208 @@
+#!/usr/bin/env bash
+# Usage: echo -e "firefox\nkate\n…" | meta
+#        meta firefox kate …
+#
+# For each package name, emit one TSV line:
+#   pkgname<TAB>homepage<TAB>source
+#
+# source is one of:
+#   nixpkgs   — homepage came from nixpkgs#<pname>.meta.homepage
+#   plasmoid  — homepage came from a Plasma plasmoid metadata.json (Website)
+#   ""        — no link found
+#
+# Skips packages whose name is empty. Unknown packages emit no line at all
+# (callers should treat absence as "no link").
+set -u
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+command -v nix >/dev/null 2>&1 || { exit 0; }
+
+if [ $# -gt 0 ]; then
+    pkgs=("$@")
+else
+    mapfile -t pkgs
+fi
+
+# De-duplicate, drop blanks, and discard anything that doesn't look like a
+# plausible Nix attribute / pname. We're handed names sourced from
+# `nix store diff-closures` output, but those names ultimately come from
+# arbitrary derivations (including ones from untrusted flakes a user may have
+# added). Restricting to a conservative charset blocks Nix string-interpolation
+# injection (`${…}`), attr-path traversal (`.`), and shell-metacharacter
+# surprises before any name reaches the Nix evaluator or jq.
+declare -A seen=()
+unique=()
+name_re='^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$'
+for p in "${pkgs[@]}"; do
+    [ -z "$p" ] && continue
+    [[ "$p" =~ $name_re ]] || continue
+    # Defence in depth: even though the regex forbids '.', reject any name that
+    # contains one — pkgs.<name> is a single attribute, not an attr-path.
+    case "$p" in *.*) continue ;; esac
+    [ -n "${seen[$p]+x}" ] && continue
+    seen[$p]=1
+    unique+=("$p")
+done
+[ "${#unique[@]}" -eq 0 ] && exit 0
+
+# ── 1. Plasmoid metadata.json scan (cheap, local) ─────────────────────────
+# Most user-built KDE widgets ship a metadata.json with a Website field.
+# We index by every name a caller might pass us: the Nix pname extracted from
+# the store-path, the plasmoid Id, the Id's last segment, and the directory
+# name. Whichever the diff happens to show, the lookup will hit.
+declare -A plasmoid_url=()
+register() {
+    local key="$1" url="$2"
+    [ -z "$key" ] || [ -z "$url" ] && return
+    [ -z "${plasmoid_url[$key]+x}" ] && plasmoid_url["$key"]="$url"
+}
+
+plasmoid_dirs=(
+    "/run/current-system/sw/share/plasma/plasmoids"
+    "/nix/var/nix/profiles/default/share/plasma/plasmoids"
+    "$HOME/.nix-profile/share/plasma/plasmoids"
+    "$HOME/.local/share/plasma/plasmoids"
+)
+# Walk live plasmoid dirs (follows symlinks → store paths)
+for dir in "${plasmoid_dirs[@]}"; do
+    [ -d "$dir" ] || continue
+    while IFS= read -r -d '' meta; do
+        local_url=""
+        local_id=""
+        if command -v jq >/dev/null 2>&1; then
+            local_url=$(jq -r '.KPlugin.Website // ""' "$meta" 2>/dev/null)
+            local_id=$(jq -r '.KPlugin.Id // ""' "$meta" 2>/dev/null)
+        else
+            local_url=$(grep -oP '"Website"\s*:\s*"\K[^"]+' "$meta" | head -n1)
+            local_id=$(grep -oP '"Id"\s*:\s*"\K[^"]+' "$meta" | head -n1)
+        fi
+        [ -z "$local_url" ] && continue
+
+        # Resolve symlinks to find the real (often store) path
+        real_meta=$(readlink -f "$meta" 2>/dev/null || echo "$meta")
+
+        # Key 1: Nix pname from the store-path basename (HASH-NAME-VER)
+        if [[ "$real_meta" == /nix/store/* ]]; then
+            store_dir="${real_meta#/nix/store/}"
+            store_dir="${store_dir%%/*}"
+            name_ver="${store_dir#*-}"
+            pname=$(echo "$name_ver" | sed -E 's/-[0-9][0-9a-zA-Z.+_-]*$//')
+            register "$pname" "$local_url"
+        fi
+        # Key 2: full plasmoid Id (org.kde.plasma.claudeusage)
+        register "$local_id" "$local_url"
+        # Key 3: Id's last segment (claudeusage)
+        [ -n "$local_id" ] && register "${local_id##*.}" "$local_url"
+        # Key 4: containing dir name (e.g. org.muddyblack.claudeusageTest)
+        dir_name=$(basename "$(dirname "$meta")")
+        register "$dir_name" "$local_url"
+    done < <(find "$dir" -maxdepth 3 -name "metadata.json" -print0 2>/dev/null)
+done
+
+# ── 2. Batched nixpkgs meta.homepage lookup ───────────────────────────────
+# One eval handles every requested package; ~400ms regardless of count.
+# Packages not in nixpkgs become null in the result.
+#
+# Security: we pass package names through a JSON file consumed by
+# `builtins.fromJSON`, never via Nix-source interpolation. That treats every
+# name as opaque data, so a malicious pname like `${builtins.readFile "/etc/…"}`
+# cannot trigger code evaluation. The names_re filter above is the first line
+# of defence; this is the second.
+homepage_json=""
+if [ "${#unique[@]}" -gt 0 ]; then
+    names_file=$(mktemp -t meta-names.XXXXXX.json) || exit 0
+    trap 'rm -f "$names_file"' EXIT
+    # Build a JSON array of names. python3 is in current-system; fall back to
+    # a hand-rolled writer if it's missing.
+    if command -v python3 >/dev/null 2>&1; then
+        printf '%s\n' "${unique[@]}" | python3 -c '
+import json, sys
+json.dump([l.rstrip("\n") for l in sys.stdin if l.strip()], sys.stdout)
+' > "$names_file"
+    else
+        # The names_re filter has already restricted us to [A-Za-z0-9._+-],
+        # so no JSON-escaping is needed for the elements themselves.
+        {
+            printf '['
+            first=1
+            for n in "${unique[@]}"; do
+                if [ "$first" -eq 1 ]; then first=0; else printf ','; fi
+                printf '"%s"' "$n"
+            done
+            printf ']'
+        } > "$names_file"
+    fi
+
+    # Look up homepage via top-level pkgs first; if missing, try kdePackages
+    # and plasma5Packages (Plasma 6 split many KDE attrs under kdePackages).
+    # Note: `pkgs.${name}` is dynamic attribute access, not source-level
+    # interpolation — `name` is the runtime value from fromJSON.
+    expr='let
+            pkgs = import (builtins.getFlake "nixpkgs") {};
+            names = builtins.fromJSON (builtins.readFile (builtins.getEnv "META_NAMES_FILE"));
+            tryAttr = path: name:
+              let r = builtins.tryEval ((pkgs.${path}.${name} or {}).meta.homepage or null);
+              in if r.success then r.value else null;
+            tryTop = name:
+              let r = builtins.tryEval ((pkgs.${name} or {}).meta.homepage or null);
+              in if r.success then r.value else null;
+            lookup = name:
+              let a = tryTop name;
+              in if a != null then a
+                 else let b = tryAttr "kdePackages" name;
+                      in if b != null then b
+                         else tryAttr "plasma5Packages" name;
+          in builtins.listToAttrs (map (n: { name = n; value = lookup n; }) names)'
+    homepage_json=$(META_NAMES_FILE="$names_file" timeout 20 nix eval --json --impure --expr "$expr" 2>/dev/null || true)
+fi
+
+# ── 3. Fallback: direct /nix/store scan for any pkg not matched yet ───────
+# Useful for plasmoids built but not currently linked into a plasma dir.
+store_lookup() {
+    local pname="$1"
+    [ -z "$pname" ] && return
+    # Glob /nix/store for entries starting with hash-pname-<ver>/
+    local cand
+    for cand in /nix/store/*-"$pname"-[0-9]*; do
+        [ -d "$cand" ] || continue
+        local mfile
+        mfile=$(find "$cand" -name "metadata.json" -path "*plasmoids*" 2>/dev/null | head -n1)
+        [ -z "$mfile" ] && continue
+        local url=""
+        if command -v jq >/dev/null 2>&1; then
+            url=$(jq -r '.KPlugin.Website // ""' "$mfile" 2>/dev/null)
+        else
+            url=$(grep -oP '"Website"\s*:\s*"\K[^"]+' "$mfile" | head -n1)
+        fi
+        if [ -n "$url" ]; then
+            echo "$url"
+            return
+        fi
+    done
+}
+
+# ── 4. Emit results ───────────────────────────────────────────────────────
+for p in "${unique[@]}"; do
+    # Plasmoid match wins for user-built widgets — it points at the actual
+    # upstream repo, not a nixpkgs search page.
+    if [ -n "${plasmoid_url[$p]:-}" ]; then
+        printf '%s\t%s\t%s\n' "$p" "${plasmoid_url[$p]}" "plasmoid"
+        continue
+    fi
+    # nixpkgs meta.homepage from the batched eval
+    if [ -n "$homepage_json" ] && command -v jq >/dev/null 2>&1; then
+        url=$(printf '%s' "$homepage_json" | jq -r --arg n "$p" '.[$n] // ""' 2>/dev/null)
+        if [ -n "$url" ] && [ "$url" != "null" ]; then
+            printf '%s\t%s\t%s\n' "$p" "$url" "nixpkgs"
+            continue
+        fi
+    fi
+    # Last resort: scan the store for a built-but-unlinked plasmoid
+    store_url=$(store_lookup "$p")
+    if [ -n "$store_url" ]; then
+        printf '%s\t%s\t%s\n' "$p" "$store_url" "plasmoid"
+    fi
+done
+
+exit 0

@@ -76,6 +76,11 @@ PlasmoidItem {
     // Icon cache: pkgName -> icon string (system theme name or "")
     property var iconCache: ({})
 
+    // Meta cache: pkgName -> { url, source }
+    //   source = "nixpkgs" | "plasmoid" | ""   ("" means we looked it up and
+    //   found nothing — used to suppress repeated lookups)
+    property var metaCache: ({})
+
     // ── Action tracking (exposed to FullView for busy bar text) ───────────────
     property string currentActionType: ""
     property int currentActionGenNum: -1
@@ -192,10 +197,7 @@ PlasmoidItem {
         if (!plasmoid.configuration.showNotifications)
             return;
         const icon = isError ? "dialog-error" : "system-software-update";
-        // shell-escape single quotes
-        const t = (title || "").replace(/'/g, "'\\''");
-        const b = (body || "").replace(/'/g, "'\\''");
-        sh("notify-send -i " + icon + " '" + t + "' '" + b + "'", null);
+        sh("notify-send -i " + icon + " " + shq(title) + " " + shq(body), null);
     }
 
     // Human-readable byte formatter — used for closure size + disk usage chips.
@@ -221,6 +223,17 @@ PlasmoidItem {
         }
         const obj = c.createObject(root);
         obj.exec(cmd, cb);
+    }
+
+    // Wrap a value as a single-quoted POSIX-shell literal. Returns `'…'` so
+    // callers concatenate without adding their own quotes. Any embedded
+    // single quote is closed, re-opened with an escaped quote, and the literal
+    // resumes — the canonical safe-quoting idiom.
+    // Use this for EVERY user/config/derivation-sourced string that becomes
+    // part of a shell command. Concatenating with bare `'…'` plus `.replace`
+    // is fragile and has been removed.
+    function shq(value) {
+        return "'" + String(value == null ? "" : value).replace(/'/g, "'\\''") + "'";
     }
 
     // ── Operations ────────────────────────────────────────────────────────────
@@ -256,18 +269,30 @@ PlasmoidItem {
     }
 
     function probeSecrets() {
-        const esc = s => (s || "").replace(/'/g, "'\\''");
-        const deployed = esc(plasmoid.configuration.secretsPath);
-        const source = esc(plasmoid.configuration.secretsSourcePath);
-        const flake = esc(root.flakePath);
-        sh(root.scriptDir + "secrets '" + deployed + "' '" + source + "' '" + flake + "'", function (cmd, out, err, code) {
+        sh(root.scriptDir + "secrets " + shq(plasmoid.configuration.secretsPath) + " " + shq(plasmoid.configuration.secretsSourcePath) + " " + shq(root.flakePath), function (cmd, out, err, code) {
             root.parseSopsInfo(out || "");
         });
     }
 
     function runHashProbe(mode, input) {
         root.hashResult = null;
-        sh(root.scriptDir + "hash '" + mode + "' '" + input.replace(/'/g, "'\\''") + "'", function (cmd, out, err, code) {
+        // mode comes from a fixed 5-string allowlist in the UI, but guard
+        // defensively in case a future caller passes something else.
+        const allowed = {
+            url: 1,
+            zip: 1,
+            github: 1,
+            file: 1,
+            store: 1
+        };
+        if (!allowed[mode]) {
+            root.hashResult = {
+                value: "ERROR: invalid hash mode",
+                isError: true
+            };
+            return;
+        }
+        sh(root.scriptDir + "hash " + shq(mode) + " " + shq(input), function (cmd, out, err, code) {
             const raw = (out || "").trim();
             const isError = raw.startsWith("ERROR:");
             root.hashResult = {
@@ -287,6 +312,11 @@ PlasmoidItem {
     }
 
     function loadGenDetails(genNum) {
+        // Coerce to a strict positive integer — genNum is then safe to splice
+        // into shell paths without further escaping.
+        genNum = parseInt(genNum, 10);
+        if (!(genNum > 0))
+            return;
         if (root.detailsCache[genNum] !== undefined) {
             root.selectedGenNum = genNum;
             return;
@@ -323,7 +353,9 @@ PlasmoidItem {
     }
 
     function comparePair(genA, genB) {
-        if (genA <= 0 || genB <= 0 || genA === genB)
+        genA = parseInt(genA, 10);
+        genB = parseInt(genB, 10);
+        if (!(genA > 0) || !(genB > 0) || genA === genB)
             return;
         root.pairDiffA = genA;
         root.pairDiffB = genB;
@@ -373,6 +405,7 @@ PlasmoidItem {
         };
         root.pairDiffCache = cache;
         root.loadIcons(diffList);
+        root.loadMeta(diffList);
     }
 
     function loadIcons(diffList) {
@@ -382,7 +415,7 @@ PlasmoidItem {
         if (unknown.length === 0)
             return;
         const input = unknown.join("\n");
-        sh("echo '" + input.replace(/'/g, "'\\''") + "' | " + root.scriptDir + "icons", function (cmd, out, err, code) {
+        sh("printf %s " + shq(input) + " | " + root.scriptDir + "icons", function (cmd, out, err, code) {
             const updated = Object.assign({}, root.iconCache);
             (out || "").split("\n").forEach(line => {
                 const tab = line.indexOf("\t");
@@ -397,23 +430,52 @@ PlasmoidItem {
         });
     }
 
-    function checkFlakeUpdates() {
+    // Resolve a real upstream homepage for each package — meta.homepage from
+    // nixpkgs, or the Website field of a plasmoid metadata.json. One shell call
+    // covers the whole diff (the eval is batched). Packages with no link found
+    // are cached with source="" so we don't re-probe them.
+    function loadMeta(diffList) {
+        const unknown = diffList.map(d => d.name).filter(n => n && !(n in root.metaCache));
+        if (unknown.length === 0)
+            return;
+        const input = unknown.join("\n");
+        sh("printf %s " + shq(input) + " | " + root.scriptDir + "meta", function (cmd, out, err, code) {
+            const updated = Object.assign({}, root.metaCache);
+            (out || "").split("\n").forEach(line => {
+                const parts = line.split("\t");
+                if (parts.length >= 3 && parts[0])
+                    updated[parts[0]] = {
+                        url: parts[1],
+                        source: parts[2]
+                    };
+            });
+            unknown.forEach(n => {
+                if (!(n in updated))
+                    updated[n] = {
+                        url: "",
+                        source: ""
+                    };
+            });
+            root.metaCache = updated;
+        });
+    }
+
+    function checkFlakeUpdates(isRetry) {
         if (root.isCheckingFlake || root.flakePath === "")
             return;
         root.isCheckingFlake = true;
-        const path = root.flakePath.replace(/'/g, "'\\''");
-        sh(root.scriptDir + "flake-probe '" + path + "'", function (cmd, out, err, code) {
+        sh(root.scriptDir + "flake-probe " + shq(root.flakePath), function (cmd, out, err, code) {
             root.isCheckingFlake = false;
             if (code !== 0) {
                 const msg = (err || out || "").trim() || i18n("flake-probe failed");
                 root.pushToast(msg, true);
                 return;
             }
-            root.parseFlakeProbe(out || "");
+            root.parseFlakeProbe(out || "", !!isRetry);
         });
     }
 
-    function parseFlakeProbe(text) {
+    function parseFlakeProbe(text, isRetry) {
         const lines = text.split("\n");
         const updates = [];
         const unreachable = [];
@@ -451,16 +513,36 @@ PlasmoidItem {
         root.flakeUpdates = updates;
         root.lastFlakeCheckTime = new Date().toLocaleTimeString();
 
-        if (unreachable.length > 0)
-            root.pushToast(i18n("Could not reach: %1").arg(unreachable.join(", ")), true);
+        // Transient network blips (network not up yet, GitHub anon rate-limit, brief DNS hiccup)
+        // are common on the first probe after login. Silently retry once; only toast if it
+        // still fails. After the retry succeeds, that recurrence will hit this branch with
+        // no unreachable items, so the toast never fires.
+        if (unreachable.length > 0) {
+            if (!isRetry) {
+                flakeRetryTimer.restart();
+            } else {
+                root.pushToast(i18n("Could not reach: %1").arg(unreachable.join(", ")), true);
+            }
+        }
 
         if (updates.length > 0)
             root.notify(i18n("NixOS — flake updates available"), i18np("%1 flake input has updates available", "%1 flake inputs have updates available", updates.length), false);
     }
 
+    Timer {
+        id: flakeRetryTimer
+        interval: 15000
+        repeat: false
+        onTriggered: root.checkFlakeUpdates(true)
+    }
+
     function runCustomCommand(cmd, label) {
         const workDir = root.flakePath !== "" ? root.flakePath : "~";
-        sh(root.scriptDir + "terminal '" + root.terminalApp + "' '" + workDir + "' '" + cmd + "'", null);
+        // cmd is the user's own custom command (from plasmoid config), so we
+        // pass it verbatim — escaping it would break legitimate uses like
+        // pipelines and quoted args. terminalApp and workDir are NOT meant
+        // to be shell expressions, so they get quoted.
+        sh(root.scriptDir + "terminal " + shq(root.terminalApp) + " " + shq(workDir) + " " + shq(cmd), null);
         root.pushToast(i18n("Launching: %1").arg(label), false);
         // Start watching for a new generation. The external command runs in a terminal
         // we don't control, so we infer success from the system profile growing.
@@ -534,6 +616,14 @@ PlasmoidItem {
 
     function executeAction(genNum, action) {
         if (root.isBusy)
+            return;
+        // CRITICAL: this builds a command that runs under `pkexec` (root).
+        // Reject anything that isn't a clean positive int or a known action
+        // before it can reach the shell-string concatenation below.
+        genNum = parseInt(genNum, 10);
+        if (!(genNum > 0))
+            return;
+        if (action !== "switch" && action !== "rollback" && action !== "delete")
             return;
         root.isBusy = true;
         root.currentActionType = action;
@@ -708,6 +798,7 @@ PlasmoidItem {
         };
         root.detailsCache = cache;
         root.loadIcons(diffList);
+        root.loadMeta(diffList);
         root.selectedGenNum = genNum;
     }
 
@@ -797,7 +888,17 @@ PlasmoidItem {
         probeSecrets();
         probeDiskUsage();
         if (root.flakePath !== "")
-            checkFlakeUpdates();
+            initialFlakeCheckTimer.start();
+    }
+
+    // The widget loads as soon as Plasma starts the panel — often before NetworkManager
+    // has come up. Defer the very first flake probe to give the network a chance.
+    // (The recurring timer below still fires on its own schedule.)
+    Timer {
+        id: initialFlakeCheckTimer
+        interval: 30000
+        repeat: false
+        onTriggered: root.checkFlakeUpdates()
     }
 
     onExpandedChanged: {
@@ -901,6 +1002,7 @@ PlasmoidItem {
         isLoadingPairDiff: root.isLoadingPairDiff
         diffViewMode: plasmoid.configuration.diffViewMode || "compact"
         iconCache: root.iconCache
+        metaCache: root.metaCache
         showPackageIcons: plasmoid.configuration.showPackageIcons
         iconStyle: root.iconStyle
 

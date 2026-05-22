@@ -17,6 +17,7 @@ Item {
     // when false the user toggles it by clicking the row (compact mode).
     property bool forceExpanded: false
     property var iconCache: ({})
+    property var metaCache: ({})
     property bool showPackageIcons: true
 
     signal copyRequested(string text)
@@ -342,23 +343,56 @@ Item {
                 }
             }
 
-            // nixpkgs GitHub search link
+            // Upstream / source link.
+            // Prefers (in order):
+            //   1) meta.homepage from nixpkgs  → real upstream project page
+            //   2) Website from a plasmoid metadata.json → user-built widget repo
+            //   3) nixpkgs search fallback     → at least lets the user find the derivation
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
-                readonly property string ghUrl: "https://github.com/NixOS/nixpkgs/search?q=" + encodeURIComponent(root.pkgName)
+
+                readonly property var metaEntry: root.metaCache && root.pkgName ? root.metaCache[root.pkgName] : undefined
+                // The URL ultimately comes from either nixpkgs meta.homepage or a
+                // plasmoid metadata.json's Website field — both are upstream-controlled
+                // strings. Restrict to http(s) so a malicious entry can't open
+                // file:// / javascript: / data: / etc. via Qt.openUrlExternally.
+                readonly property string rawUrl: metaEntry && metaEntry.url ? metaEntry.url : ""
+                readonly property string metaUrl: /^https?:\/\//i.test(rawUrl) ? rawUrl : ""
+                readonly property string metaSource: metaUrl !== "" && metaEntry && metaEntry.source ? metaEntry.source : ""
+                readonly property string searchUrl: "https://github.com/NixOS/nixpkgs/search?q=" + encodeURIComponent(root.pkgName)
+                readonly property string activeUrl: metaUrl !== "" ? metaUrl : searchUrl
+
+                // Short label that hints at the link's origin
+                readonly property string label: {
+                    if (metaSource === "plasmoid")
+                        return i18n("upstream");
+                    if (metaSource === "nixpkgs")
+                        return i18n("homepage");
+                    return "nixpkgs";
+                }
+
+                // Pretty-printed host + path for the link text
+                readonly property string displayUrl: {
+                    const u = activeUrl;
+                    const stripped = u.replace(/^https?:\/\//, "").replace(/\/$/, "");
+                    return stripped.length > 48 ? stripped.substring(0, 45) + "…" : stripped;
+                }
+
                 Text {
-                    text: "nixpkgs"
+                    text: parent.label
                     color: root.textColor
                     opacity: 0.38
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
                 Text {
-                    text: "github.com/NixOS/nixpkgs  ↗"
+                    text: parent.displayUrl + "  ↗"
                     color: root.accentColor
                     opacity: ghMa.containsMouse ? 1.0 : 0.72
                     font.pixelSize: root.fpx(8)
+                    elide: Text.ElideRight
+                    Layout.fillWidth: true
                     Behavior on opacity {
                         NumberAnimation {
                             duration: 100
@@ -369,8 +403,8 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Qt.openUrlExternally(parent.parent.ghUrl)
-                        ToolTip.text: parent.parent.ghUrl
+                        onClicked: Qt.openUrlExternally(parent.parent.activeUrl)
+                        ToolTip.text: parent.parent.activeUrl
                         ToolTip.visible: containsMouse
                         ToolTip.delay: 400
                     }
