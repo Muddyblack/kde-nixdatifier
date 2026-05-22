@@ -70,7 +70,7 @@
               zip                    # needed by pack.sh
             ];
             shellHook = ''
-              pre-commit install --install-hooks
+              pre-commit install -f --install-hooks
               echo "nixos-generation-explorer dev shell ready"
               echo "  test_install.sh  — install to local Plasma session"
               echo "  pack.sh          — produce .plasmoid archive"
