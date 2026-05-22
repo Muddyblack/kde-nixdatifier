@@ -13,6 +13,7 @@
   <a href="https://opensource.org/licenses/MIT">
     <img src="https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge" alt="License: MIT" />
   </a>
+  <img src="https://img.shields.io/github/downloads/Muddyblack/kde-nixdatifier/total?style=for-the-badge&logo=kdeplasma&logoColor=white&label=Downloads&color=blue" alt="Downloads" />
 </p>
 
 <p align="center">
