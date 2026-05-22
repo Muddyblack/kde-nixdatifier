@@ -398,6 +398,16 @@ Item {
                             icon.name: "configure"
                             onTriggered: fullView.configureRequested()
                         }
+                        MenuItem {
+                            text: i18n("KDE Store Page")
+                            icon.name: "kde"
+                            onTriggered: Qt.openUrlExternally("https://store.kde.org/p/2360222/")
+                        }
+                        MenuItem {
+                            text: i18n("GitHub Repository")
+                            icon.name: "vcs-code-collaborator"
+                            onTriggered: Qt.openUrlExternally("https://github.com/Muddyblack/kde-nixdatifier")
+                        }
                     }
                 }
             }
