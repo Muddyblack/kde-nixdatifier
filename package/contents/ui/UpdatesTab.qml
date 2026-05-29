@@ -27,6 +27,7 @@ Item {
 
     signal dryRunRequested(string inputName, string overrideRef)
     signal dryRunCacheCleared(string inputName)
+    signal updateInputRequested(string inputName)
 
     anchors.fill: parent
     visible: activeViewMode === "updates"
@@ -260,6 +261,42 @@ Item {
                                     }
                                 }
                                 ToolTip.text: previewBtn.isExpanded ? i18n("Hide preview") : (previewBtn.isLoading ? i18n("Evaluating… (this may take a moment)") : i18n("Preview packages that would change"))
+                                ToolTip.visible: containsMouse
+                                ToolTip.delay: 400
+                            }
+                        }
+
+                        // ── "Update this input" button ────────────
+                        Rectangle {
+                            id: updateBtn
+                            width: 22
+                            height: 22
+                            radius: 5
+                            color: updateMa.containsMouse ? Qt.rgba(0.2, 0.8, 0.4, 0.30) : Qt.rgba(0.2, 0.8, 0.4, 0.12)
+                            border.color: Qt.rgba(0.2, 0.8, 0.4, 0.45)
+                            border.width: 1
+                            Behavior on color {
+                                ColorAnimation {
+                                    duration: 100
+                                }
+                            }
+
+                            Kirigami.Icon {
+                                anchors.centerIn: parent
+                                source: updatesTab.svg("ic_refresh")
+                                isMask: true
+                                implicitWidth: 12
+                                implicitHeight: 12
+                                color: "#55cc88"
+                            }
+
+                            MouseArea {
+                                id: updateMa
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: updatesTab.updateInputRequested(modelData.input)
+                                ToolTip.text: i18n("Update only '%1' in lock file").arg(modelData.input)
                                 ToolTip.visible: containsMouse
                                 ToolTip.delay: 400
                             }

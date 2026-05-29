@@ -619,6 +619,30 @@ PlasmoidItem {
         onTriggered: root.checkFlakeUpdates(true)
     }
 
+    function runFlakeUpdateInput(inputName) {
+        if (root.flakePath === "") {
+            root.pushToast(i18n("Flake path not configured."), true);
+            return;
+        }
+        if (root.isBusy) {
+            root.pushToast(i18n("Already running another action — please wait."), true);
+            return;
+        }
+        root.isBusy = true;
+        const cmd = "sh -c \"cd " + shq(root.flakePath) + " && nix flake update " + shq(inputName) + " 2>&1\"";
+        root.pushToast(i18n("Updating '%1'…").arg(inputName), false);
+        sh(cmd, function (c, out, err, code) {
+            root.isBusy = false;
+            if (code !== 0) {
+                root.pushToast(i18n("Update failed: ") + (err || out || "").trim(), true);
+                return;
+            }
+            root.pushToast(i18n("'%1' updated in lock file.").arg(inputName), false);
+            root.notify(i18n("NixOS — flake input updated"), i18n("'%1' updated in lock file.").arg(inputName), false);
+            root.checkFlakeUpdates();
+        });
+    }
+
     function runDryPreview(inputName, overrideRef) {
         if (!overrideRef || root.flakePath === "")
             return;
@@ -1279,6 +1303,7 @@ PlasmoidItem {
         }
         onHashRequested: (mode, input) => root.runHashProbe(mode, input)
         onDryRunRequested: (inputName, overrideRef) => root.runDryPreview(inputName, overrideRef)
+        onUpdateInputRequested: inputName => root.runFlakeUpdateInput(inputName)
         onPopOutRequested: root.pinned = !root.pinned
         onConfigureRequested: plasmoid.internalAction("configure").trigger()
         isPopOutOpen: root.pinned

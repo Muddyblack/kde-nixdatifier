@@ -129,6 +129,7 @@ Item {
     signal cancelCleanup
     signal compareRequested(int genA, int genB)
     signal dryRunRequested(string inputName, string overrideRef)
+    signal updateInputRequested(string inputName)
     signal popOutRequested
     signal configureRequested
 
@@ -1215,6 +1216,7 @@ Item {
                 iconStyle: fullView.iconStyle
 
                 onDryRunRequested: (inputName, overrideRef) => fullView.dryRunRequested(inputName, overrideRef)
+                onUpdateInputRequested: inputName => fullView.updateInputRequested(inputName)
                 onDryRunCacheCleared: inputName => {
                     var c = Object.assign({}, fullView.dryRunCache);
                     delete c[inputName];
