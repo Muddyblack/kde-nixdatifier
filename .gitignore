@@ -1,3 +1,5 @@
+.claude/
+
 # Build artifacts
 *.plasmoid
 notes.md

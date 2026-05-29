@@ -10,6 +10,7 @@ KCM.SimpleKCM {
 
     // ── General ─────────────────────────────────────────────────────────
     property alias cfg_flakePath: flakePathField.text
+    property alias cfg_configRepoPath: configRepoPathField.text
     property alias cfg_checkInterval: checkIntervalSpin.value
     property alias cfg_maxGenerations: maxGenerationsSpin.value
     property alias cfg_enableHostDetect: hostDetectCB.checked
@@ -19,6 +20,7 @@ KCM.SimpleKCM {
     property alias cfg_showCommandButtons: showCommandButtonsCB.checked
     property alias cfg_commandTerminal: commandTerminalField.text
     property string cfg_customCommands: ""
+    property alias cfg_gcCustomCommand: gcCustomCommandField.text
 
     // Internal list model — max 4 entries
     ListModel {
@@ -142,6 +144,21 @@ KCM.SimpleKCM {
 
                     QQC.Label {
                         text: i18n("Directory containing flake.nix. Leave empty and the widget will look in /etc/nixos, ~/nixos-config, ~/.config/nixos.")
+                        opacity: 0.55
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
+                    }
+
+                    QQC.TextField {
+                        id: configRepoPathField
+                        Kirigami.FormData.label: i18n("Config Git Repo:")
+                        placeholderText: i18n("e.g. ~/nixos-config (leave empty to reuse System Flake Path)")
+                        Layout.fillWidth: true
+                    }
+
+                    QQC.Label {
+                        text: i18n("Git repository containing your .nix files (configuration.nix, home-manager.nix, packages.nix, …). Snapshots its HEAD on each generation switch so the diff view can show what you actually changed.")
                         opacity: 0.55
                         font.pixelSize: Kirigami.Theme.smallFont.pixelSize
                         wrapMode: Text.WordWrap
@@ -283,6 +300,25 @@ KCM.SimpleKCM {
                                 saveCmds();
                             }
                         }
+                    }
+
+                    Kirigami.Separator {
+                        Kirigami.FormData.isSection: true
+                        Kirigami.FormData.label: i18n("Cleanup / GC")
+                    }
+
+                    QQC.TextField {
+                        id: gcCustomCommandField
+                        Kirigami.FormData.label: i18n("Custom GC command:")
+                        placeholderText: i18n("e.g. upnix, sudo nix-collect-garbage -d")
+                        Layout.fillWidth: true
+                    }
+                    QQC.Label {
+                        text: i18n("Shown as an extra option in the cleanup popup. Leave empty to hide it. Runs via the terminal emulator set below.")
+                        opacity: 0.55
+                        font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+                        wrapMode: Text.WordWrap
+                        Layout.fillWidth: true
                     }
 
                     QQC.TextField {

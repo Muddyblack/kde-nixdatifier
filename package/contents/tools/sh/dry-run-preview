@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Usage: dry-run-preview <flake-dir> <input-name> <override-ref> [hostname]
+#
+# Runs `nix build --dry-run` with the given input overridden to a new revision
+# and prints one TSV line per package that would change:
+#
+#   action<TAB>name<TAB>oldVersion<TAB>newVersion
+#
+# action = "fetch" (pre-built binary available) | "build" (needs local build)
+# oldVersion = currently installed version, or "" if package is new
+# newVersion = version from the store path name, or "" if unparseable
+#
+# NOTE: only downloads the nixpkgs flake source (~20-40 MB, one-time, cached).
+# No package binaries are downloaded.
+
+set -u
+
+FLAKE_DIR="${1:-}"
+INPUT_NAME="${2:-}"
+OVERRIDE_REF="${3:-}"
+HOSTNAME="${4:-$(hostname -s 2>/dev/null || cat /proc/sys/kernel/hostname)}"
+
+[ -z "$FLAKE_DIR" ] || [ -z "$INPUT_NAME" ] || [ -z "$OVERRIDE_REF" ] && {
+    echo "ERROR: usage: dry-run-preview <flake-dir> <input-name> <override-ref> [hostname]"
+    exit 1
+}
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+command -v nix >/dev/null 2>&1 || { echo "ERROR: nix not on PATH"; exit 1; }
+
+# ── Build a name→version map of the currently running system's packages ───────
+declare -A CURRENT_VER
+while IFS= read -r storepath; do
+    # Strip leading /nix/store/<hash>-
+    namever="${storepath##*/}"
+    namever="${namever#*-}"          # drop the hash prefix (everything up to first -)
+    # Actually sed is cleaner for the 32-char hash:
+    namever=$(echo "$storepath" | sed 's|.*/[a-z0-9]\{32\}-||')
+    namever="${namever%.drv}"
+    # Split at last numeric component: name-1.2.3 → name + 1.2.3
+    if [[ "$namever" =~ ^(.+)-([0-9][^-]*)$ ]]; then
+        CURRENT_VER["${BASH_REMATCH[1]}"]="${BASH_REMATCH[2]}"
+    fi
+done < <(nix-store -q --requisites /run/current-system 2>/dev/null | grep -v '\.drv$' | sort -u)
+
+# ── Run the evaluation dry-run ────────────────────────────────────────────────
+TARGET="${FLAKE_DIR}#nixosConfigurations.${HOSTNAME}.config.system.build.toplevel"
+
+DRY_OUT=$(nix build --dry-run "$TARGET" \
+    --override-input "$INPUT_NAME" "$OVERRIDE_REF" \
+    2>&1 1>/dev/null)
+
+EXIT_CODE=$?
+
+# Surface hard evaluation errors
+if [ $EXIT_CODE -ne 0 ]; then
+    FIRST_ERR=$(echo "$DRY_OUT" | grep -m1 "^error:" || echo "$DRY_OUT" | head -3)
+    echo "ERROR: $FIRST_ERR"
+    exit 1
+fi
+
+# If nix says "nothing to do" (no output), that means everything is up to date
+if [ -z "$DRY_OUT" ]; then
+    echo "OK: already up to date"
+    exit 0
+fi
+
+# ── Parse and emit results ────────────────────────────────────────────────────
+SKIP_PATTERNS="^nixos-system-|^nixos-configuration-|^etc-|^system-path$|-man$|-info$|-doc$|-dev$|-lib$"
+
+ACTION="fetch"
+while IFS= read -r line; do
+    case "$line" in
+        *"will be built"*)   ACTION="build" ; continue ;;
+        *"will be fetched"*) ACTION="fetch" ; continue ;;
+    esac
+
+    # Match store paths: leading whitespace + /nix/store/<hash>-<name>
+    if [[ "$line" =~ ^[[:space:]]*/nix/store/[a-z0-9]{32}-(.+)$ ]]; then
+        storename="${BASH_REMATCH[1]}"
+        storename="${storename%.drv}"
+
+        # Split name-version
+        if [[ "$storename" =~ ^(.+)-([0-9][^-]*)$ ]]; then
+            pkg_name="${BASH_REMATCH[1]}"
+            new_ver="${BASH_REMATCH[2]}"
+        else
+            pkg_name="$storename"
+            new_ver=""
+        fi
+
+        # Skip system-level and meta outputs
+        echo "$pkg_name" | grep -qE "$SKIP_PATTERNS" && continue
+
+        old_ver="${CURRENT_VER[$pkg_name]:-}"
+
+        # Skip if old == new (already installed, just a rebuild artifact)
+        [ -n "$old_ver" ] && [ "$old_ver" = "$new_ver" ] && continue
+
+        printf '%s\t%s\t%s\t%s\n' "$ACTION" "$pkg_name" "$old_ver" "$new_ver"
+    fi
+done <<< "$DRY_OUT" | sort -t$'\t' -k2,2 | uniq

@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# Usage: config-snapshot <generation-number> <repo-path>
+#
+# Records the current git HEAD of <repo-path> for <generation-number> in
+#   $XDG_STATE_HOME/nixdatifier/config-snapshots.tsv   (default ~/.local/state/…)
+#
+# Format: one TSV record per generation
+#   <gen>\t<commit>\t<repo>\t<iso-timestamp>
+#
+# Idempotent: re-recording the same (gen, commit) is a no-op. A different commit
+# for an existing gen overwrites the prior entry (last write wins — only relevant
+# if you rebuild without bumping the generation, which Nix doesn't).
+#
+# Exit codes:
+#   0  recorded or already present
+#   2  bad arguments
+#   3  repo path missing / not a git repo / dirty-uncommitted HEAD is fine; we
+#      record whatever HEAD points at
+set -euo pipefail
+
+gen="${1:-}"
+repo="${2:-}"
+
+[[ "$gen"  =~ ^[0-9]+$ ]] || { echo "config-snapshot: bad gen '$gen'" >&2; exit 2; }
+[ -n "$repo" ] && [ -d "$repo" ] || { echo "config-snapshot: repo '$repo' not a directory" >&2; exit 3; }
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin"
+command -v git >/dev/null 2>&1 || { echo "config-snapshot: git not on PATH" >&2; exit 3; }
+
+# git -C handles the cd; -C fails clean if not a repo.
+commit="$(git -C "$repo" rev-parse HEAD 2>/dev/null)" || {
+    echo "config-snapshot: '$repo' is not a git repository" >&2
+    exit 3
+}
+
+state_dir="${XDG_STATE_HOME:-$HOME/.local/state}/nixdatifier"
+state_file="$state_dir/config-snapshots.tsv"
+mkdir -p "$state_dir"
+: > "${state_file}.lock" 2>/dev/null || true
+
+# Skip if (gen, commit) already recorded.
+if [ -f "$state_file" ] && awk -F'\t' -v g="$gen" -v c="$commit" \
+        '$1 == g && $2 == c {found=1; exit} END{exit !found}' "$state_file"; then
+    exit 0
+fi
+
+ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+tmp="$(mktemp "${state_file}.XXXXXX")"
+# Drop any prior row for this gen, then append the new one.
+if [ -f "$state_file" ]; then
+    awk -F'\t' -v g="$gen" '$1 != g' "$state_file" > "$tmp"
+fi
+printf '%s\t%s\t%s\t%s\n' "$gen" "$commit" "$repo" "$ts" >> "$tmp"
+mv -f "$tmp" "$state_file"

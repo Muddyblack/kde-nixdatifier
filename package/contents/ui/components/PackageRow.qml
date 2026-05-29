@@ -1,6 +1,6 @@
-import QtQuick 2.15
-import QtQuick.Layouts 1.15
-import QtQuick.Controls 2.15
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
 import org.kde.kirigami as Kirigami
 
 // Single expandable package diff row.
@@ -184,8 +184,7 @@ Item {
         implicitHeight: detailCol.implicitHeight + 12
         radius: 5
         color: Qt.rgba(root.sigil.r, root.sigil.g, root.sigil.b, 0.06)
-        border.color: Qt.rgba(root.sigil.r, root.sigil.g, root.sigil.b, 0.22)
-        border.width: 1
+        border.width: 0
 
         ColumnLayout {
             id: detailCol

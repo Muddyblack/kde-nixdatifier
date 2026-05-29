@@ -57,6 +57,32 @@
           };
         });
 
+      # ── `nix run .#view` — preview widget with plasmoidviewer ─────────────
+      apps = forAllSystems (system:
+        let pkgs = pkgsFor system; in
+        {
+          view = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "view" ''
+              exec nix shell nixpkgs#kdePackages.plasma-sdk -c plasmoidviewer \
+                -a "$PWD/package" -f "''${1:-planar}"
+            '');
+          };
+          pack = {
+            type = "app";
+            program = toString (pkgs.writeShellScript "pack" ''
+              set -euo pipefail
+              here="$PWD"
+              ver="$(grep -oE '"Version":[[:space:]]*"[^"]+"' "$here/package/metadata.json" | head -1 | sed -E 's/.*"([^"]+)"$/\1/')"
+              name="$(basename "$here")"
+              out="$here/$name-$ver.plasmoid"
+              rm -f "$out"
+              (cd "$here/package" && ${pkgs.zip}/bin/zip -r "$out" . -x '*.swp' '*~')
+              echo "wrote $out"
+            '');
+          };
+        });
+
       # ── development shell ──────────────────────────────────────────────────
       devShells = forAllSystems (system:
         let pkgs = pkgsFor system; in
@@ -66,14 +92,14 @@
             packages = with pkgs; [
               qt6.qtdeclarative      # qmllint + qmlformat
               kdePackages.kpackage   # kpackagetool6
+              kdePackages.plasma-sdk # plasmoidviewer
               pre-commit
               zip                    # needed by pack.sh
             ];
             shellHook = ''
               pre-commit install -f --install-hooks
               echo "nixos-generation-explorer dev shell ready"
-              echo "  test_install.sh  — install to local Plasma session"
-              echo "  pack.sh          — produce .plasmoid archive"
+              echo "  make help        — list targets (view, install, pack, tag)"
             '';
           };
         });

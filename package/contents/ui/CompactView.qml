@@ -1,5 +1,6 @@
-import QtQuick 2.15
-import QtQuick.Layouts 1.15
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
 import org.kde.kirigami as Kirigami
 
 Item {
@@ -119,6 +120,18 @@ Item {
             color: "#ffffff"
             font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.85)
             font.bold: true
+        }
+
+        ToolTip.text: compactRoot.flakeUpdates.length === 1 ? "1 flake input update available" : compactRoot.flakeUpdates.length + " flake input updates available"
+        ToolTip.visible: badgeMa.containsMouse
+        ToolTip.delay: 300
+
+        MouseArea {
+            id: badgeMa
+            anchors.fill: parent
+            hoverEnabled: true
+            propagateComposedEvents: true
+            onClicked: mouse => mouse.accepted = false
         }
     }
 

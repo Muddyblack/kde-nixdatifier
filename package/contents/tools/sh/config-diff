@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+# Usage: config-diff <gen-a> <gen-b>
+#
+# Reads snapshots written by `config-snapshot` and emits the .nix-file diff
+# between the two generations' recorded commits.
+#
+# Output (record-separated by \x1e):
+#   [0] status   — "ok" | "missing" | "no-repo" | "same-commit" | "error"
+#   [1] message  — human-readable detail for non-ok statuses (empty on ok)
+#   [2] repo     — absolute repo path used
+#   [3] commit-a — recorded commit for gen-a (empty if missing)
+#   [4] commit-b — recorded commit for gen-b (empty if missing)
+#   [5] diff     — unified diff body, filtered to *.nix (empty unless ok)
+#
+# Filtering to *.nix drops lockfile churn and readme noise. Lock changes are
+# already covered by the flake-probe view.
+set -u
+
+a="${1:-}"
+b="${2:-}"
+
+emit() {
+    # status, message, repo, commit_a, commit_b, diff
+    printf '%s\x1e%s\x1e%s\x1e%s\x1e%s\x1e%s' "$1" "$2" "$3" "$4" "$5" "$6"
+}
+
+[[ "$a" =~ ^[0-9]+$ && "$b" =~ ^[0-9]+$ ]] || {
+    emit "error" "bad arguments: expected two generation numbers" "" "" "" ""
+    exit 0
+}
+
+state_file="${XDG_STATE_HOME:-$HOME/.local/state}/nixdatifier/config-snapshots.tsv"
+if [ ! -f "$state_file" ]; then
+    emit "missing" "no snapshots recorded yet" "" "" "" ""
+    exit 0
+fi
+
+lookup() {
+    # Print "commit<TAB>repo" for the requested gen, empty if not found.
+    awk -F'\t' -v g="$1" '$1 == g {print $2 "\t" $3; exit}' "$state_file"
+}
+
+row_a="$(lookup "$a")"
+row_b="$(lookup "$b")"
+
+if [ -z "$row_a" ] || [ -z "$row_b" ]; then
+    missing=""
+    [ -z "$row_a" ] && missing="$a"
+    [ -z "$row_b" ] && missing="${missing:+$missing, }$b"
+    emit "missing" "no snapshot for generation $missing" "" \
+        "${row_a%%	*}" "${row_b%%	*}" ""
+    exit 0
+fi
+
+commit_a="${row_a%%	*}"
+repo_a="${row_a#*	}"
+commit_b="${row_b%%	*}"
+repo_b="${row_b#*	}"
+
+# Repos for the two snapshots may differ if the user changed config repo paths
+# between rebuilds. Honest answer: refuse to diff across repos rather than
+# pretend the comparison is meaningful.
+if [ "$repo_a" != "$repo_b" ]; then
+    emit "no-repo" "snapshots span two different repos ($repo_a vs $repo_b)" \
+        "$repo_b" "$commit_a" "$commit_b" ""
+    exit 0
+fi
+
+if [ "$commit_a" = "$commit_b" ]; then
+    emit "same-commit" "both generations built from the same commit" \
+        "$repo_b" "$commit_a" "$commit_b" ""
+    exit 0
+fi
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin"
+command -v git >/dev/null 2>&1 || {
+    emit "error" "git not on PATH" "$repo_b" "$commit_a" "$commit_b" ""
+    exit 0
+}
+
+if [ ! -d "$repo_b/.git" ] && ! git -C "$repo_b" rev-parse --git-dir >/dev/null 2>&1; then
+    emit "error" "repo '$repo_b' is no longer a git repository" \
+        "$repo_b" "$commit_a" "$commit_b" ""
+    exit 0
+fi
+
+# Both commits must still exist (history could have been rewritten).
+for c in "$commit_a" "$commit_b"; do
+    if ! git -C "$repo_b" cat-file -e "$c^{commit}" 2>/dev/null; then
+        emit "error" "commit $c no longer exists in repo (history rewritten?)" \
+            "$repo_b" "$commit_a" "$commit_b" ""
+        exit 0
+    fi
+done
+
+diff_body="$(git -C "$repo_b" diff --no-color "$commit_a" "$commit_b" -- '*.nix' 2>/dev/null || true)"
+emit "ok" "" "$repo_b" "$commit_a" "$commit_b" "$diff_body"

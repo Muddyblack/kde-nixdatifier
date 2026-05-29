@@ -9,6 +9,10 @@
         <entry name="flakePath" type="String">
             <default></default>
         </entry>
+        <entry name="configRepoPath" type="String">
+            <!-- Git repo containing your NixOS config (.nix files). Empty = use flakePath. -->
+            <default></default>
+        </entry>
         <entry name="checkInterval" type="Int">
             <default>3600</default>
         </entry>
@@ -132,6 +136,9 @@
         </entry>
         <entry name="popupHeight" type="Int">
             <default>680</default>
+        </entry>
+        <entry name="gcCustomCommand" type="String">
+            <default></default>
         </entry>
     </group>
 </kcfg>

@@ -80,12 +80,26 @@ probe_one() {
         ls-remote --quiet "$remote_url" "${refs[@]}" 2>/dev/null \
         | awk 'NR==1 {print $1; exit}')
 
+    # Build the --override-input flake ref for the dry-run preview feature.
+    local override_ref=""
+    case "$type" in
+        github)    override_ref="github:${owner}/${repo}/${remote_rev}" ;;
+        gitlab)    override_ref="gitlab:${owner}/${repo}/${remote_rev}" ;;
+        sourcehut) override_ref="sourcehut:${owner}/${repo}/${remote_rev}" ;;
+        git)
+            local base="$url"
+            [[ "$base" == git+* ]] && base="${base#git+}"
+            base="${base%.git}"
+            override_ref="${base}?rev=${remote_rev}"
+            ;;
+    esac
+
     if [ -z "$remote_rev" ]; then
-        printf '%s\t%s\t%s\t\t%s\t%s\n' "$name" "unreachable" "$rev" "$date" "$remote_url"
+        printf '%s\t%s\t%s\t\t%s\t%s\t\n' "$name" "unreachable" "$rev" "$date" "$remote_url"
     elif [ "$remote_rev" = "$rev" ]; then
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "unchanged" "$rev" "$remote_rev" "$date" "$remote_url"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t\n' "$name" "unchanged" "$rev" "$remote_rev" "$date" "$remote_url"
     else
-        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "ok" "$rev" "$remote_rev" "$date" "$remote_url"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$name" "ok" "$rev" "$remote_rev" "$date" "$remote_url" "$override_ref"
     fi
 }
 

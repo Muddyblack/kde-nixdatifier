@@ -1,6 +1,6 @@
-import QtQuick 2.15
-import QtQuick.Layouts 1.15
-import QtQuick.Controls 2.15
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
 import org.kde.plasma.plasmoid
 import org.kde.plasma.plasma5support as P5Support
 import org.kde.kirigami as Kirigami
@@ -9,6 +9,46 @@ import "components"
 
 PlasmoidItem {
     id: root
+
+    toolTipMainText: root.hostname !== "" ? root.hostname : "Nixdatifier"
+    toolTipSubText: {
+        var lines = [];
+
+        if (root.activeGenNum > 0) {
+            var genLine = "Generation #" + root.activeGenNum;
+            if (root.bootedGenNum > 0 && root.bootedGenNum !== root.activeGenNum)
+                genLine += " (active) · Booted: #" + root.bootedGenNum;
+            lines.push(genLine);
+        }
+
+        if (root.nixosVersion !== "")
+            lines.push("NixOS " + root.nixosVersion);
+
+        var activeDetails = root.detailsCache[root.activeGenNum];
+        if (activeDetails && activeDetails.kernelVer)
+            lines.push("Kernel: " + activeDetails.kernelVer);
+
+        if (root.uptime !== "")
+            lines.push("Uptime: " + root.uptime);
+
+        if (root.flakeUpdates.length > 0) {
+            lines.push("");
+            lines.push(root.flakeUpdates.length === 1 ? "1 flake update available:" : root.flakeUpdates.length + " flake updates available:");
+            for (var i = 0; i < root.flakeUpdates.length; i++) {
+                var u = root.flakeUpdates[i];
+                lines.push("  • " + u.input + ": " + u.oldRev + " → " + u.newRev);
+            }
+        } else if (root.lastFlakeCheckTime !== "") {
+            lines.push("Flake: up to date");
+        }
+
+        if (root.isBusy)
+            lines.push("Status: Running action…");
+        else if (root.isLoadingGens)
+            lines.push("Status: Loading generations…");
+
+        return lines.join("\n");
+    }
 
     // ── Size hints ────────────────────────────────────────────────────────────
     Layout.minimumWidth: 360
@@ -70,6 +110,9 @@ PlasmoidItem {
     // Cache of pairwise diffs for the Diff tab: key "A_B" -> { diff: [...] }
     property var pairDiffCache: ({})
     property bool isLoadingPairDiff: false
+
+    // Config-diff cache: key = genNum → { status, message, repo, commitA, commitB, diff }
+    property var configDiffCache: ({})
     property int pairDiffA: -1
     property int pairDiffB: -1
 
@@ -89,6 +132,12 @@ PlasmoidItem {
     property var flakeUpdates: []
     property bool isCheckingFlake: false
     property string lastFlakeCheckTime: ""
+
+    // ── Dry-run preview state ─────────────────────────────────────────────────
+    // key = input name, value = { status: "ok"|"error"|"loading", packages: [...] }
+    // package: { action, name, oldVersion, newVersion }
+    property var dryRunCache: ({})
+    property bool isDryRunning: false
 
     // ── System info ───────────────────────────────────────────────────────────
     property string hostname: ""
@@ -139,6 +188,7 @@ PlasmoidItem {
     // ── Pending confirmation ──────────────────────────────────────────────────
     property int pendingGenNum: -1
     property string pendingAction: ""
+    property string pendingCleanup: ""
 
     // ── View state ────────────────────────────────────────────────────────────
     property string activeViewMode: plasmoid.configuration.defaultView || "timeline"
@@ -148,6 +198,16 @@ PlasmoidItem {
 
     function pushToast(message, isError) {
         var arr = root.toasts.slice();
+        var existing = -1;
+        for (var i = 0; i < arr.length; i++) {
+            if (arr[i].msg === message) {
+                existing = i;
+                break;
+            }
+        }
+        if (existing >= 0) {
+            arr.splice(existing, 1);
+        }
         arr.push({
             msg: message,
             err: isError || false,
@@ -216,7 +276,7 @@ PlasmoidItem {
     // ── Shell helper ──────────────────────────────────────────────────────────
     // Creates a fresh Shell.qml instance, runs cmd, calls cb(cmd,out,err,code), auto-cleans up.
     function sh(cmd, cb) {
-        const c = Qt.createComponent("components/Shell.qml");
+        const c = Qt.createComponent(Qt.resolvedUrl("components/Shell.qml"));
         if (c.status !== Component.Ready) {
             pushToast(i18n("Shell component error: %1").arg(c.errorString()), true);
             return;
@@ -311,12 +371,33 @@ PlasmoidItem {
         return null;
     }
 
+    function loadConfigDiff(genNum) {
+        if (root.configDiffCache[genNum] !== undefined)
+            return;
+        const prev = root.getPreviousGen(genNum);
+        const baseNum = prev !== null ? prev : genNum;
+        sh(root.scriptDir + "config-diff " + baseNum + " " + genNum, function (cmd, out, err, code) {
+            const parts = (out || "").split("\x1e");
+            const cache = Object.assign({}, root.configDiffCache);
+            cache[genNum] = {
+                status: parts[0] || "error",
+                message: parts[1] || "",
+                repo: parts[2] || "",
+                commitA: parts[3] || "",
+                commitB: parts[4] || "",
+                diff: parts[5] || ""
+            };
+            root.configDiffCache = cache;
+        });
+    }
+
     function loadGenDetails(genNum) {
         // Coerce to a strict positive integer — genNum is then safe to splice
         // into shell paths without further escaping.
         genNum = parseInt(genNum, 10);
         if (!(genNum > 0))
             return;
+        root.loadConfigDiff(genNum);
         if (root.detailsCache[genNum] !== undefined) {
             root.selectedGenNum = genNum;
             return;
@@ -346,7 +427,7 @@ PlasmoidItem {
             basePath = prev !== null ? "/nix/var/nix/profiles/system-" + prev + "-link" : link;
         }
 
-        sh(root.scriptDir + "details '" + link + "' '" + basePath + "'", function (cmd, out, err, code) {
+        sh(root.scriptDir + "details " + shq(link) + " " + shq(basePath), function (cmd, out, err, code) {
             root.isLoadingDetails = false;
             root.parseDetails(genNum, out || "");
         });
@@ -368,7 +449,7 @@ PlasmoidItem {
         const linkA = "/nix/var/nix/profiles/system-" + genA + "-link";
         const linkB = "/nix/var/nix/profiles/system-" + genB + "-link";
         // base = B, target = A → diff shows what A has on top of B
-        sh(root.scriptDir + "details '" + linkA + "' '" + linkB + "'", function (cmd, out, err, code) {
+        sh(root.scriptDir + "details " + shq(linkA) + " " + shq(linkB), function (cmd, out, err, code) {
             root.isLoadingPairDiff = false;
             root.parsePairDiff(genA, genB, out || "");
         });
@@ -500,13 +581,15 @@ PlasmoidItem {
             if (status !== "ok")
                 continue;
 
+            const overrideRef = parts.length > 6 ? parts[6] : "";
             updates.push({
                 input: name,
                 oldRev: oldRev.substring(0, 7),
                 newRev: newRev.substring(0, 7),
                 oldDate: oldDateTs > 0 ? new Date(oldDateTs * 1000).toLocaleDateString() : "",
                 newDate: i18n("latest"),
-                url: url.replace(/\.git$/, "")
+                url: url.replace(/\.git$/, ""),
+                overrideRef: overrideRef
             });
         }
 
@@ -534,6 +617,70 @@ PlasmoidItem {
         interval: 15000
         repeat: false
         onTriggered: root.checkFlakeUpdates(true)
+    }
+
+    function runDryPreview(inputName, overrideRef) {
+        if (!overrideRef || root.flakePath === "")
+            return;
+        if (root.dryRunCache[inputName] && root.dryRunCache[inputName].status !== "error")
+            return;
+
+        const cache = Object.assign({}, root.dryRunCache);
+        cache[inputName] = {
+            status: "loading",
+            packages: []
+        };
+        root.dryRunCache = cache;
+        root.isDryRunning = true;
+
+        sh(root.scriptDir + "dry-run-preview " + shq(root.flakePath) + " " + shq(inputName) + " " + shq(overrideRef), function (cmd, out, err, code) {
+            root.isDryRunning = false;
+            const text = (out || "").trim();
+            const updated = Object.assign({}, root.dryRunCache);
+
+            if (text.startsWith("ERROR:")) {
+                updated[inputName] = {
+                    status: "error",
+                    packages: [],
+                    errorMsg: text.replace(/^ERROR:\s*/, "")
+                };
+                root.dryRunCache = updated;
+                return;
+            }
+            if (text.startsWith("OK:")) {
+                updated[inputName] = {
+                    status: "ok",
+                    packages: []
+                };
+                root.dryRunCache = updated;
+                return;
+            }
+
+            const pkgs = [];
+            const lines = text.split("\n");
+            for (let i = 0; i < lines.length; i++) {
+                const parts = lines[i].split("\t");
+                if (parts.length < 2)
+                    continue;
+                const action = parts[0] || "";
+                const name = parts[1] || "";
+                const oldV = parts[2] || "";
+                const newV = parts[3] || "";
+                if (!name)
+                    continue;
+                pkgs.push({
+                    action,
+                    name,
+                    oldVersion: oldV,
+                    newVersion: newV
+                });
+            }
+            updated[inputName] = {
+                status: "ok",
+                packages: pkgs
+            };
+            root.dryRunCache = updated;
+        });
     }
 
     function runCustomCommand(cmd, label) {
@@ -673,6 +820,45 @@ PlasmoidItem {
         });
     }
 
+    function executeCleanup(mode) {
+        if (mode === "gc-custom") {
+            const cmd = plasmoid.configuration.gcCustomCommand.trim();
+            if (cmd)
+                root.runCustomCommand(cmd, cmd);
+            return;
+        }
+        if (root.isBusy) {
+            root.pushToast(i18n("Already running another action — please wait."), true);
+            return;
+        }
+        if (mode !== "gc" && mode !== "gc-14d" && mode !== "gc-all")
+            return;
+        root.isBusy = true;
+        const prefix = plasmoid.configuration.usePkexec ? "pkexec " : "";
+        const pathExport = "export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; ";
+        let gcArgs;
+        if (mode === "gc")
+            gcArgs = "";
+        else if (mode === "gc-14d")
+            gcArgs = " --delete-older-than 14d";
+        else
+            gcArgs = " -d";
+        const cmd = "sh -c \"" + pathExport + prefix + "nix-collect-garbage" + gcArgs + " 2>&1\"";
+        sh(cmd, function (c, out, err, code) {
+            root.isBusy = false;
+            if (code !== 0) {
+                root.pushToast(i18n("GC failed: ") + (err || out || "").trim(), true);
+                return;
+            }
+            const freed = (out || "").match(/(\d[\d,.]* \w+B?) freed/i);
+            const msg = freed ? i18n("GC complete — %1 freed.").arg(freed[1]) : i18n("GC complete.");
+            root.pushToast(msg, false);
+            root.notify(i18n("NixOS — garbage collected"), msg, false);
+            root.refreshGenerations();
+            root.probeDiskUsage();
+        });
+    }
+
     // ── Parsers ───────────────────────────────────────────────────────────────
 
     function parseGenerations(text) {
@@ -739,7 +925,52 @@ PlasmoidItem {
         root.activeGenNum = activeNum;
         root.bootedGenNum = bootedNum;
 
+        root.loadGenSummaries();
+        root.snapshotActiveConfig();
         root.probeSysInfo();
+    }
+
+    // Eagerly populate nixos-version + kernel for all gens (no nix commands — instant).
+    // Writes partial detailsCache entries so header badges appear without expanding first.
+    function loadGenSummaries() {
+        sh(root.scriptDir + "gen-summaries", function (cmd, out, err, code) {
+            const records = (out || "").split("\x1d");
+            const cache = Object.assign({}, root.detailsCache);
+            for (let i = 0; i < records.length; i++) {
+                const parts = records[i].split("\x1e");
+                const genNum = parseInt(parts[0], 10);
+                if (!(genNum > 0))
+                    continue;
+                // Don't overwrite a fully-loaded entry (which has diff data).
+                if (cache[genNum] !== undefined && !cache[genNum].partial)
+                    continue;
+                const nixosVer = (parts[1] || "").trim();
+                const kernelPath = (parts[2] || "").trim();
+                const kMatch = kernelPath.match(/linux-([^/]+)/);
+                const kernelVer = kMatch ? kMatch[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
+                cache[genNum] = {
+                    nixosVer,
+                    kernelVer,
+                    commitDate: "",
+                    diff: [],
+                    closureBytes: 0,
+                    partial: true
+                };
+            }
+            root.detailsCache = cache;
+        });
+    }
+
+    // Record git HEAD of the config repo for the currently-active generation.
+    // Idempotent — the tool short-circuits if (gen, commit) is already on file.
+    // Only fires when a config repo is configured (or flakePath is a git repo).
+    function snapshotActiveConfig() {
+        if (root.activeGenNum <= 0)
+            return;
+        const repo = (plasmoid.configuration.configRepoPath || root.flakePath || "").trim();
+        if (!repo)
+            return;
+        sh(root.scriptDir + "config-snapshot " + root.activeGenNum + " " + shq(repo), function (cmd, out, err, code) { /* fire-and-forget */ });
     }
 
     function stripAnsi(s) {
@@ -997,9 +1228,14 @@ PlasmoidItem {
         hashResult: root.hashResult
         pendingGenNum: root.pendingGenNum
         pendingAction: root.pendingAction
+        pendingCleanup: root.pendingCleanup
+        gcCustomCommand: plasmoid.configuration.gcCustomCommand || ""
         usePkexec: plasmoid.configuration.usePkexec
         pairDiffCache: root.pairDiffCache
         isLoadingPairDiff: root.isLoadingPairDiff
+        configDiffCache: root.configDiffCache
+        dryRunCache: root.dryRunCache
+        isDryRunning: root.isDryRunning
         diffViewMode: plasmoid.configuration.diffViewMode || "compact"
         iconCache: root.iconCache
         metaCache: root.metaCache
@@ -1009,6 +1245,16 @@ PlasmoidItem {
         onViewModeChanged: mode => root.activeViewMode = mode
         onConfirmPending: () => root.confirmPendingAction()
         onCancelPending: () => root.cancelPendingAction()
+        onCleanupVariantPicked: mode => {
+            root.pendingCleanup = mode;
+        }
+        onConfirmCleanup: mode => {
+            root.pendingCleanup = "";
+            root.executeCleanup(mode);
+        }
+        onCancelCleanup: () => {
+            root.pendingCleanup = "";
+        }
         onCompareRequested: (a, b) => root.comparePair(a, b)
         onDiffViewModeChanged: mode => plasmoid.configuration.diffViewMode = mode
         onRefreshRequested: () => root.refreshGenerations()
@@ -1032,6 +1278,7 @@ PlasmoidItem {
             root.toasts = arr;
         }
         onHashRequested: (mode, input) => root.runHashProbe(mode, input)
+        onDryRunRequested: (inputName, overrideRef) => root.runDryPreview(inputName, overrideRef)
         onPopOutRequested: root.pinned = !root.pinned
         onConfigureRequested: plasmoid.internalAction("configure").trigger()
         isPopOutOpen: root.pinned

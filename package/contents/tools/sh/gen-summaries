@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Reads nixos-version and kernel for every generation profile link — no nix commands,
+# so it returns nearly instantly. Output: records separated by \x1d, each record:
+#   gennum \x1e nixos-version \x1e kernel-path
+for link in /nix/var/nix/profiles/system-*-link; do
+    [ -L "$link" ] || continue
+    gen=$(basename "$link" | grep -oE '[0-9]+')
+    [ -n "$gen" ] || continue
+    nixos_ver=$(cat "$link/nixos-version" 2>/dev/null || true)
+    kernel=$(readlink -f "$link/kernel" 2>/dev/null || true)
+    printf '%s\x1e%s\x1e%s\x1d' "$gen" "$nixos_ver" "$kernel"
+done
