@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 476" width="680" height="476">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 520" width="680" height="520">
 <defs>
 <style>
 .bg-card {
@@ -63,7 +63,7 @@
   }
 }
 .pulse-circle {
-  transform-origin: 45px 334px;
+  transform-origin: 45px 400px;
   animation: pulse-glow 2.5s infinite ease-in-out;
 }
 </style>
@@ -87,8 +87,8 @@
 </defs>
 
 <!-- Main Container -->
-<rect width="680" height="476" rx="16" fill="url(#bg-grad)" class="bg-card" filter="url(#shadow)"/>
-<rect width="680" height="476" rx="16" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1.2"/>
+<rect width="680" height="520" rx="16" fill="url(#bg-grad)" class="bg-card" filter="url(#shadow)"/>
+<rect width="680" height="520" rx="16" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1.2"/>
 <!-- Subtle top inner highlight -->
 <path d="M 16 1.5 L 664 1.5" stroke="rgba(255,255,255,0.12)" stroke-linecap="round"/>
 
@@ -2802,56 +2802,71 @@
   </g>
 </g>
 
-<!-- Title & Meta -->
-<text x="72" y="38" font-family="system-ui,-apple-system,sans-serif" font-size="19" font-weight="700" fill="#ffffff">Nixdatifier</text>
-<g transform="translate(182, 23)">
-  <rect width="216" height="22" rx="11" fill="rgba(168,85,247,0.11)" stroke="#c084fc" stroke-width="1.2"/>
-  <text x="108" y="15" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="10.5" font-weight="600" fill="#c084fc" letter-spacing="0.4">#406 · 25.11.20260518.687f05a</text>
-</g>
-<text x="72" y="56" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="#7c7f93">muddyblack  •  up 1h 25m  •  switched 2026-05-21 21:55:35</text>
+<!-- Title Column & Version Badge -->
+<text x="72" y="35" font-family="system-ui,-apple-system,sans-serif" font-size="17" font-weight="700" fill="#ffffff" letter-spacing="0.2">Nixdatifier</text>
+<rect x="72" y="42" width="44" height="16" rx="8" fill="rgba(168,85,247,0.11)" stroke="#c084fc" stroke-width="1"/>
+<text x="94" y="53.5" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="9" font-weight="700" fill="#c084fc" letter-spacing="0.3">#457</text>
+<text x="124" y="54" font-family="system-ui,-apple-system,sans-serif" font-size="10.5" fill="#7c7f93">25.11 • 2026-05-18</text>
 
-<!-- Header Actions -->
-<!-- Update button -->
-<g class="btn" transform="translate(432, 23)">
-  <rect width="66" height="24" rx="12" fill="rgba(168,85,247,0.08)" stroke="#a855f7" stroke-width="1.2"/>
-  <text x="33" y="16" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="11" font-weight="600" fill="#c084fc">update</text>
+<!-- Storage Info on the Right -->
+<text x="656" y="33" text-anchor="end" font-family="system-ui,-apple-system,sans-serif" font-size="9" font-weight="700" fill="#7c7f93" letter-spacing="0.5">TOTAL POOL</text>
+<text x="656" y="53" text-anchor="end" font-family="system-ui,-apple-system,sans-serif" font-size="16" font-weight="700" fill="#f5c2e7">87.8 GB</text>
+
+<!-- Horizontal Divider -->
+<line x1="24" y1="68" x2="656" y2="68" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+
+<!-- Row 2: Secondary Metadata -->
+<text x="24" y="91" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="#ffffff" opacity="0.75"><tspan fill="#a78bfa" opacity="0.9">👤 </tspan>muddyblack</text>
+<circle cx="120" cy="87.5" r="1.5" fill="#7c7f93" opacity="0.4"/>
+<text x="132" y="91" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="#7c7f93" opacity="0.65"><tspan fill="#a78bfa" opacity="0.9">⏱️ </tspan>up 1h 25m</text>
+<circle cx="214" cy="87.5" r="1.5" fill="#7c7f93" opacity="0.4"/>
+<text x="226" y="91" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" fill="#7c7f93" opacity="0.65"><tspan fill="#a78bfa" opacity="0.9">📅 </tspan>switched 2026-05-21 21:55:35</text>
+
+<!-- Row 2 Right: Action Buttons -->
+<!-- Pin Button -->
+<g class="btn" transform="translate(574, 76)">
+  <rect width="22" height="22" rx="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <polygon points="11,5.5 15.5,8 15.5,13.5 11,16 6.5,13.5 6.5,8" stroke="#7c7f93" stroke-width="1.2" fill="none"/>
 </g>
-<!-- Upnix button -->
-<g class="btn" transform="translate(508, 23)">
-  <rect width="66" height="24" rx="12" fill="rgba(168,85,247,0.08)" stroke="#a855f7" stroke-width="1.2"/>
-  <text x="33" y="16" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="11" font-weight="600" fill="#c084fc">upnix</text>
+<!-- Cleanup Button -->
+<g class="btn" transform="translate(604, 76)">
+  <rect width="22" height="22" rx="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <path d="M6 15 L16 15 M7 12 L15 12 M9 9 L13 9 M11 6 L11 9" stroke="#7c7f93" stroke-width="1.2" stroke-linecap="round"/>
 </g>
-<!-- Settings Gear (Hexagon) -->
-<g class="btn" transform="translate(584, 23)">
-  <rect width="24" height="24" rx="12" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-  <!-- Hexagon Shape centered in 24x24 box: center is (12, 12) -->
-  <polygon points="12,4 20,8.5 20,15.5 12,20 4,15.5 4,8.5" stroke="#7c7f93" stroke-width="1.5" fill="none"/>
-  <circle cx="12" cy="12" r="3.5" stroke="#7c7f93" stroke-width="1.5" fill="none"/>
+<!-- Overflow Button -->
+<g class="btn" transform="translate(634, 76)">
+  <rect width="22" height="22" rx="5" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
+  <circle cx="7.5" cy="11" r="1.2" fill="#7c7f93"/>
+  <circle cx="11" cy="11" r="1.2" fill="#7c7f93"/>
+  <circle cx="14.5" cy="11" r="1.2" fill="#7c7f93"/>
 </g>
-<!-- More menu -->
-<g class="btn" transform="translate(620, 23)">
-  <rect width="24" height="24" rx="12" fill="rgba(255,255,255,0.03)" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-  <circle cx="8" cy="12" r="1.5" fill="#7c7f93"/>
-  <circle cx="12" cy="12" r="1.5" fill="#7c7f93"/>
-  <circle cx="16" cy="12" r="1.5" fill="#7c7f93"/>
+
+<!-- Row 3: Command Buttons -->
+<g class="btn" transform="translate(24, 106)">
+  <rect width="312" height="28" rx="6" fill="rgba(168,85,247,0.08)" stroke="rgba(168,85,247,0.3)" stroke-width="1"/>
+  <text x="156" y="18" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#c084fc" letter-spacing="0.3">update</text>
+</g>
+<g class="btn" transform="translate(344, 106)">
+  <rect width="312" height="28" rx="6" fill="rgba(168,85,247,0.08)" stroke="rgba(168,85,247,0.3)" stroke-width="1"/>
+  <text x="156" y="18" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="11.5" font-weight="700" fill="#c084fc" letter-spacing="0.3">upnix</text>
 </g>
 
 <!-- TABS NAVIGATION -->
 <g transform="translate(0, 0)">
   <!-- Navigation row container -->
-  <rect x="24" y="80" width="632" height="36" rx="8" fill="rgba(255,255,255,0.01)" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+  <rect x="24" y="146" width="632" height="36" rx="8" fill="rgba(255,255,255,0.01)" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
   
   <!-- Timeline Active Pill -->
   <g class="tab">
-    <rect x="28" y="84" width="112" height="28" rx="6" stroke="#c084fc" fill="rgba(168, 85, 247, 0.08)" stroke-width="1.2"/>
-    <g transform="translate(36, 90) scale(0.66)" fill="#c084fc">
+    <rect x="28" y="150" width="112" height="28" rx="6" stroke="#c084fc" fill="rgba(168, 85, 247, 0.08)" stroke-width="1.2"/>
+    <g transform="translate(36, 156) scale(0.66)" fill="#c084fc">
       <path d="M4 4h2v16H4zm4 2h12v2H8zm0 5h12v2H8zm0 5h8v2H8z"/>
     </g>
-    <text x="56" y="102" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" font-weight="600" fill="#c084fc">Timeline</text>
+    <text x="56" y="168" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" font-weight="600" fill="#c084fc">Timeline</text>
   </g>
   
   <!-- Updates Inactive -->
-  <g class="tab" transform="translate(152, 0)">
+  <g class="tab" transform="translate(152, 66)">
     <g transform="translate(0, 90) scale(0.66)" fill="#7c7f93">
       <path d="M12 4c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8-3.58-8-8-8Zm-1 4h2v5h-2zm0 6h2v2h-2z"/>
     </g>
@@ -2859,7 +2874,7 @@
   </g>
 
   <!-- Diff Inactive -->
-  <g class="tab" transform="translate(256, 0)">
+  <g class="tab" transform="translate(256, 66)">
     <g transform="translate(0, 90) scale(0.66)" fill="#7c7f93">
       <path d="M4 3h6v2H4zm0 4h6v2H4zm0 4h4v2H4zm0 4h6v2H4zM14 3h6v2h-6zm0 4h6v2h-6zm2 4h4v2h-4zm-2 4h6v2h-6zM11 2h2v20h-2z"/>
     </g>
@@ -2867,7 +2882,7 @@
   </g>
 
   <!-- Secrets Inactive -->
-  <g class="tab" transform="translate(338, 0)">
+  <g class="tab" transform="translate(338, 66)">
     <g transform="translate(0, 90) scale(0.66)" fill="#7c7f93">
       <path d="M18 8h-1V6A5 5 0 0 0 7 6v2H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10a2 2 0 0 0-2-2ZM9 6a3 3 0 1 1 6 0v2H9V6Zm3 9a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z"/>
     </g>
@@ -2875,7 +2890,7 @@
   </g>
 
   <!-- Hash Inactive -->
-  <g class="tab" transform="translate(432, 0)">
+  <g class="tab" transform="translate(432, 66)">
     <g transform="translate(0, 90) scale(0.66)" fill="#7c7f93">
       <path d="M5 9h14v2H5zm0 4h14v2H5zM9 3h2v18H9zm4 0h2v18h-2z"/>
     </g>
@@ -2886,97 +2901,85 @@
 <!-- TIMELINE LIST CONTENT -->
 <!-- Timeline Track Paths -->
 <g stroke-linecap="round">
-  <!-- Track #406 to #405 (orange/yellow active path) -->
-  <line x1="45" y1="154" x2="45" y2="199" stroke="#ff9f0a" stroke-width="2"/>
-  <!-- Track #405 to #402 (purple path) -->
-  <line x1="45" y1="199" x2="45" y2="334" stroke="#a78bfa" stroke-width="2" opacity="0.6"/>
-  <!-- Track #402 to #401 (green active path) -->
-  <line x1="45" y1="334" x2="45" y2="379" stroke="#34d399" stroke-width="2"/>
-  <!-- Track #401 to #400 (purple path) -->
-  <line x1="45" y1="379" x2="45" y2="424" stroke="#a78bfa" stroke-width="2" opacity="0.6"/>
+  <!-- Track #457 to #456 (orange active path) -->
+  <line x1="45" y1="220" x2="45" y2="265" stroke="#ff9f0a" stroke-width="2"/>
+  <!-- Track #456 to #453 (purple inactive path) -->
+  <line x1="45" y1="265" x2="45" y2="400" stroke="#a78bfa" stroke-width="2" opacity="0.6"/>
+  <!-- Track #453 to #452 (green active path) -->
+  <line x1="45" y1="400" x2="45" y2="445" stroke="#34d399" stroke-width="2"/>
 </g>
 
-<!-- Generation Row 1 (#406 - NEXT BOOT) -->
+<!-- Generation Row 1 (#457 - NEXT BOOT) -->
 <g class="row" transform="translate(0, 0)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <rect x="72" y="136" width="3.5" height="36" rx="1.75" fill="#ff9f0a"/>
-  <circle cx="45" cy="154" r="5.5" fill="#ff9f0a" filter="url(#green-glow)"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="700" fill="#ff9f0a">#406</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#a1a5b7">2026-05-21  21:55:35</text>
+  <rect class="row-bg" x="72" y="202" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
+  <rect x="72" y="202" width="3.5" height="36" rx="1.75" fill="#ff9f0a"/>
+  <circle cx="45" cy="220" r="5.5" fill="#ff9f0a" filter="url(#green-glow)"/>
+  <text x="90" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="700" fill="#ff9f0a">#457</text>
+  <text x="144" y="224" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#a1a5b7">2026-05-21  21:55:35</text>
   <!-- Next Boot badge -->
-  <g transform="translate(528, 144)">
+  <g transform="translate(528, 210)">
     <rect width="86" height="20" rx="10" fill="rgba(255,159,10,0.08)" stroke="rgba(255,159,10,0.3)" stroke-width="1.2"/>
     <text x="43" y="13.5" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="9" font-weight="700" fill="#ff9f0a" letter-spacing="0.6">NEXT BOOT</text>
   </g>
   <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
+  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 208) scale(0.9)"/>
 </g>
 
-<!-- Generation Row 2 (#405) -->
+<!-- Generation Row 2 (#456) -->
 <g class="row" transform="translate(0, 45)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <circle cx="45" cy="154" r="4.5" fill="#a78bfa" opacity="0.85"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#405</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  21:46:57</text>
+  <rect class="row-bg" x="72" y="202" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
+  <circle cx="45" cy="220" r="4.5" fill="#a78bfa" opacity="0.85"/>
+  <text x="90" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#456</text>
+  <text x="144" y="224" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  21:46:57</text>
   <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
+  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 208) scale(0.9)"/>
 </g>
 
-<!-- Generation Row 3 (#404) -->
+<!-- Generation Row 3 (#455) -->
 <g class="row" transform="translate(0, 90)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <circle cx="45" cy="154" r="4.5" fill="#a78bfa" opacity="0.85"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#404</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  21:40:30</text>
+  <rect class="row-bg" x="72" y="202" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
+  <circle cx="45" cy="220" r="4.5" fill="#a78bfa" opacity="0.85"/>
+  <text x="90" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#455</text>
+  <text x="144" y="224" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  21:40:30</text>
   <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
+  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 208) scale(0.9)"/>
 </g>
 
-<!-- Generation Row 4 (#403) -->
+<!-- Generation Row 4 (#454) -->
 <g class="row" transform="translate(0, 135)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <circle cx="45" cy="154" r="4.5" fill="#a78bfa" opacity="0.85"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#403</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  21:00:45</text>
+  <rect class="row-bg" x="72" y="202" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
+  <circle cx="45" cy="220" r="4.5" fill="#a78bfa" opacity="0.85"/>
+  <text x="90" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#454</text>
+  <text x="144" y="224" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  21:00:45</text>
   <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
+  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 208) scale(0.9)"/>
 </g>
 
-<!-- Generation Row 5 (#402 - BOOTED) -->
+<!-- Generation Row 5 (#453 - BOOTED) -->
 <g class="row" transform="translate(0, 180)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <rect x="72" y="136" width="3.5" height="36" rx="1.75" fill="#34d399"/>
-  <circle class="pulse-circle" cx="45" cy="154" r="9" fill="none" stroke="#34d399" stroke-width="1.5" filter="url(#green-glow)"/>
-  <circle cx="45" cy="154" r="5" fill="#34d399" filter="url(#green-glow)"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="700" fill="#34d399">#402</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#a1a5b7">2026-05-21  20:42:41</text>
+  <rect class="row-bg" x="72" y="202" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
+  <rect x="72" y="202" width="3.5" height="36" rx="1.75" fill="#34d399"/>
+  <circle class="pulse-circle" cx="45" cy="220" r="9" fill="none" stroke="#34d399" stroke-width="1.5" filter="url(#green-glow)"/>
+  <circle cx="45" cy="220" r="5" fill="#34d399" filter="url(#green-glow)"/>
+  <text x="90" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="700" fill="#34d399">#453</text>
+  <text x="144" y="224" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#a1a5b7">2026-05-21  20:42:41</text>
   <!-- Booted badge -->
-  <g transform="translate(538, 144)">
+  <g transform="translate(538, 210)">
     <rect width="76" height="20" rx="10" fill="rgba(52,211,153,0.08)" stroke="rgba(52,211,153,0.3)" stroke-width="1.2"/>
     <text x="38" y="13.5" text-anchor="middle" font-family="system-ui,-apple-system,sans-serif" font-size="9" font-weight="700" fill="#34d399" letter-spacing="0.6">BOOTED</text>
   </g>
   <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
+  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 208) scale(0.9)"/>
 </g>
 
-<!-- Generation Row 6 (#401) -->
+<!-- Generation Row 6 (#452) -->
 <g class="row" transform="translate(0, 225)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <circle cx="45" cy="154" r="4.5" fill="#a78bfa" opacity="0.85"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#401</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  20:31:25</text>
+  <rect class="row-bg" x="72" y="202" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
+  <circle cx="45" cy="220" r="4.5" fill="#a78bfa" opacity="0.85"/>
+  <text x="90" y="225" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#452</text>
+  <text x="144" y="224" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  20:31:25</text>
   <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
-</g>
-
-<!-- Generation Row 7 (#400) -->
-<g class="row" transform="translate(0, 270)">
-  <rect class="row-bg" x="72" y="136" width="584" height="36" rx="6" fill="#131420" stroke="rgba(255,255,255,0.04)" stroke-width="1.2"/>
-  <circle cx="45" cy="154" r="4.5" fill="#a78bfa" opacity="0.85"/>
-  <text x="90" y="159" font-family="system-ui,-apple-system,sans-serif" font-size="14.5" font-weight="600" fill="#ffffff">#400</text>
-  <text x="144" y="158" font-family="system-ui,-apple-system,sans-serif" font-size="12.5" fill="#7c7f93">2026-05-21  20:04:03</text>
-  <!-- Chevron -->
-  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 142) scale(0.9)"/>
+  <path class="chevron" fill="#7c7f93" d="M7 10l5 5 5-5H7Z" transform="translate(628, 208) scale(0.9)"/>
 </g>
 
 </svg>
