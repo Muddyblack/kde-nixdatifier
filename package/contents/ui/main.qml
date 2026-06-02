@@ -133,6 +133,17 @@ PlasmoidItem {
     property bool isCheckingFlake: false
     property string lastFlakeCheckTime: ""
 
+    // Shell snippet that expands to the shared cache file path.
+    // All widget instances on the same machine read/write this file.
+    // Format: first line is a Unix timestamp (seconds); remaining lines are raw flake-probe TSV.
+    // Written by whichever instance runs the probe first; others just read it.
+    // Deliberately a shell expression, not a quoted path — evaluated inside sh() calls.
+    readonly property string flakeCacheExpr: '"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier-flake-state"'
+
+    // Unix timestamp of the cache snapshot currently applied to this instance.
+    // Used by the sync timer to detect when another instance wrote a newer result.
+    property int _lastFlakeCacheTs: 0
+
     // ── Dry-run preview state ─────────────────────────────────────────────────
     // key = input name, value = { status: "ok"|"error"|"loading", packages: [...] }
     // package: { action, name, oldVersion, newVersion }
@@ -541,6 +552,38 @@ PlasmoidItem {
         });
     }
 
+    // Write the raw flake-probe output + a timestamp to the shared cache file.
+    function writeFlakeCache(rawOutput) {
+        const ts = Math.floor(Date.now() / 1000);
+        root._lastFlakeCacheTs = ts;
+        const content = ts + "\n" + rawOutput;
+        sh("printf %s " + shq(content) + " > " + root.flakeCacheExpr, null);
+    }
+
+    // Read the shared cache file. Calls cb(tsSeconds, rawTsv) on success, cb(0, "") on miss.
+    function readFlakeCache(cb) {
+        sh("cat " + root.flakeCacheExpr + " 2>/dev/null", function (cmd, out, err, code) {
+            if (code !== 0 || !(out || "").trim()) {
+                cb(0, "");
+                return;
+            }
+            const nl = out.indexOf("\n");
+            if (nl < 0) {
+                cb(0, "");
+                return;
+            }
+            const ts = parseInt(out.substring(0, nl), 10) || 0;
+            const tsv = out.substring(nl + 1);
+            cb(ts, tsv);
+        });
+    }
+
+    // Apply a cache snapshot: parse the TSV and record which timestamp we applied.
+    function applyFlakeCache(ts, tsv) {
+        root._lastFlakeCacheTs = ts;
+        root.parseFlakeProbe(tsv, false);
+    }
+
     function checkFlakeUpdates(isRetry) {
         if (root.isCheckingFlake || root.flakePath === "")
             return;
@@ -552,7 +595,9 @@ PlasmoidItem {
                 root.pushToast(msg, true);
                 return;
             }
-            root.parseFlakeProbe(out || "", !!isRetry);
+            const raw = out || "";
+            root.writeFlakeCache(raw);
+            root.parseFlakeProbe(raw, !!isRetry);
         });
     }
 
@@ -1142,13 +1187,30 @@ PlasmoidItem {
         probeSysInfo();
         probeSecrets();
         probeDiskUsage();
-        if (root.flakePath !== "")
-            initialFlakeCheckTimer.start();
+        if (root.flakePath !== "") {
+            root.bootFlakeCheck();
+            root.armCacheWatcher();
+        }
     }
 
-    // The widget loads as soon as Plasma starts the panel — often before NetworkManager
-    // has come up. Defer the very first flake probe to give the network a chance.
-    // (The recurring timer below still fires on its own schedule.)
+    // On startup: read the shared cache first. If it is fresh (written within
+    // checkInterval seconds by any widget instance), apply it immediately and
+    // skip the network probe entirely. Otherwise fall through to the deferred probe.
+    function bootFlakeCheck() {
+        root.readFlakeCache(function (ts, tsv) {
+            if (ts > 0 && tsv.trim() !== "") {
+                const age = Math.floor(Date.now() / 1000) - ts;
+                const interval = Math.max(60, plasmoid.configuration.checkInterval || 3600);
+                if (age < interval) {
+                    root.applyFlakeCache(ts, tsv);
+                    return;
+                }
+            }
+            initialFlakeCheckTimer.start();
+        });
+    }
+
+    // Deferred first probe — gives the network a chance to come up after login.
     Timer {
         id: initialFlakeCheckTimer
         interval: 30000
@@ -1172,11 +1234,58 @@ PlasmoidItem {
         }
     }
 
+    // Full network probe on the configured interval.
     Timer {
         interval: Math.max(60, plasmoid.configuration.checkInterval || 3600) * 1000
         running: root.flakePath !== ""
         repeat: true
         onTriggered: root.checkFlakeUpdates()
+    }
+
+    // Cross-instance sync via inotifywait: starts a one-shot shell that blocks
+    // until the cache file is modified, then reads and applies it immediately,
+    // then arms itself again. Falls back to a 60s poll if inotifywait is absent.
+    property bool _watcherArmed: false
+
+    function armCacheWatcher() {
+        if (root._watcherArmed || root.flakePath === "")
+            return;
+        root._watcherArmed = true;
+        // Watch the cache directory for writes to our specific filename.
+        // Watching the directory means inotifywait works even before the file exists.
+        const cacheDir = '"${XDG_CACHE_HOME:-$HOME/.cache}"';
+        const cacheName = "nixdatifier-flake-state";
+        sh("inotifywait -e close_write -e moved_to -q --include " + shq(cacheName) + " " + cacheDir + " 2>/dev/null; echo ok", function (cmd, out, err, code) {
+            root._watcherArmed = false;
+            // inotifywait not available — fall back to polling
+            if ((out || "").trim() !== "ok") {
+                flakeCacheFallbackTimer.start();
+                return;
+            }
+            if (!root.isCheckingFlake) {
+                root.readFlakeCache(function (ts, tsv) {
+                    if (ts > root._lastFlakeCacheTs)
+                        root.applyFlakeCache(ts, tsv);
+                });
+            }
+            root.armCacheWatcher();
+        });
+    }
+
+    // Fallback poll used only when inotifywait is unavailable.
+    Timer {
+        id: flakeCacheFallbackTimer
+        interval: 60000
+        repeat: true
+        running: false
+        onTriggered: {
+            if (root.isCheckingFlake)
+                return;
+            root.readFlakeCache(function (ts, tsv) {
+                if (ts > root._lastFlakeCacheTs)
+                    root.applyFlakeCache(ts, tsv);
+            });
+        }
     }
 
     Timer {
