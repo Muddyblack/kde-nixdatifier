@@ -98,6 +98,29 @@ flowchart TD
     FV --> GD
 ```
 
+### Idle cost
+
+The widget is built to do as close to nothing as possible while you are not
+looking at it:
+
+- **Nothing expensive runs on a background timer.** `du -sb /nix/store` and
+  `nix-collect-garbage --dry-run` back the disk chips, and both walk the whole
+  store, so they run only when the popup is open — rate-limited to once every
+  30 minutes, never overlapping, and at `nice -n 19` / idle I/O priority.
+- **Looping animations stop when the popup closes.** The pulsing "booted"
+  marker and every spinner are bound to whether the popup is actually on
+  screen, so a closed popup does not keep the render loop awake.
+- **The flake cache watch cannot spin.** Cross-instance sync blocks on
+  `inotifywait`; if it is missing or unusable the widget falls back to a slow
+  poll instead of respawning the watch in a tight loop.
+- **Package homepage lookups are bounded.** The `/nix/store` fallback scan is a
+  single pass shared by every unresolved package, and is skipped entirely for
+  large diffs.
+
+While closed, a configured widget does one `flake-probe` per **Check Interval**
+(default hourly, shared between instances via a cache file) and one cheap
+`sysinfo` read every 30 minutes. That is all.
+
 ---
 
 ## Requirements

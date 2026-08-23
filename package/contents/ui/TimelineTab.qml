@@ -8,6 +8,8 @@ Item {
     id: timelineTab
 
     // ── Required properties ───────────────────────────────────────────────────
+    // See FullView.uiActive — false while the popup is closed.
+    property bool uiActive: true
     required property color accentColor
     required property color timelineColor
     required property color textColor
@@ -226,6 +228,7 @@ Item {
             }
 
             delegate: GenerationDelegate {
+                uiActive: timelineTab.uiActive
                 width: genListView.width
                 gen: modelData
                 accentColor: timelineTab.accentColor
@@ -276,7 +279,7 @@ Item {
         width: 64
         height: 64
         RotationAnimation on rotation {
-            running: mainSpinner.visible
+            running: mainSpinner.visible && timelineTab.uiActive
             from: 0
             to: 360
             duration: 1400

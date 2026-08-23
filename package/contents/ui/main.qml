@@ -46,6 +46,16 @@ PlasmoidItem {
             lines.push("Status: Running action…");
         else if (root.isLoadingGens)
             lines.push("Status: Loading generations…");
+        else if (root.isCheckingFlake)
+            lines.push("Status: Checking flake updates…");
+        else if (root.isLoadingDetails)
+            lines.push("Status: Loading generation details…");
+        else if (root.isDryRunning)
+            lines.push("Status: Calculating update preview…");
+        else if (root.isProbingHash)
+            lines.push("Status: Calculating hash…");
+        else if (root.isLoadingSecrets)
+            lines.push("Status: Checking secrets…");
 
         return lines.join("\n");
     }
@@ -103,6 +113,13 @@ PlasmoidItem {
     property bool isLoadingGens: false
     property bool isLoadingDetails: false
     property bool isBusy: false
+    property bool isProbingHash: false
+    property bool isLoadingSecrets: false
+    property bool isLoadingConfigDiff: false
+
+    // ── Active spinner state (panel spinner spins if any action or probe is running) ──
+    readonly property bool isSpinning: root.isBusy || root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isLoadingSecrets || root.isLoadingConfigDiff
+
     property var detailsCache: ({})
     property string diffFilter: ""
     property string diffMode: "booted"
@@ -286,10 +303,19 @@ PlasmoidItem {
 
     // ── Shell helper ──────────────────────────────────────────────────────────
     // Creates a fresh Shell.qml instance, runs cmd, calls cb(cmd,out,err,code), auto-cleans up.
+    //
+    // The Component itself is compiled once and reused: sh() is on the hot path
+    // (every probe, every refresh, every cache read), and Qt.createComponent()
+    // re-resolves and re-validates the URL on every call.
+    property var _shellComponent: null
+
     function sh(cmd, cb) {
-        const c = Qt.createComponent(Qt.resolvedUrl("components/Shell.qml"));
-        if (c.status !== Component.Ready) {
-            pushToast(i18n("Shell component error: %1").arg(c.errorString()), true);
+        if (root._shellComponent === null)
+            root._shellComponent = Qt.createComponent(Qt.resolvedUrl("components/Shell.qml"));
+        const c = root._shellComponent;
+        if (c === null || c.status !== Component.Ready) {
+            root._shellComponent = null;
+            pushToast(i18n("Shell component error: %1").arg(c ? c.errorString() : "unavailable"), true);
             return;
         }
         const obj = c.createObject(root);
@@ -330,8 +356,28 @@ PlasmoidItem {
         });
     }
 
-    function probeDiskUsage() {
+    // Disk usage is by far the most expensive probe we run: `du -sb /nix/store`
+    // walks every inode in the store and `nix-collect-garbage --dry-run` walks
+    // the whole GC graph. On a large store that is tens of seconds of pegged
+    // CPU and disk. So it is never on a background timer — it runs only when
+    // the popup is actually open (the numbers are only rendered there), it is
+    // rate-limited by diskProbeTtlMs, and never overlaps with itself.
+    // Pass force=true after an operation that actually changed the store.
+    readonly property int diskProbeTtlMs: 30 * 60 * 1000
+    property real _lastDiskProbeMs: 0
+    property bool _diskProbeRunning: false
+
+    function probeDiskUsage(force) {
+        if (root._diskProbeRunning)
+            return;
+        const now = Date.now();
+        if (!force && root._lastDiskProbeMs > 0 && (now - root._lastDiskProbeMs) < root.diskProbeTtlMs)
+            return;
+        root._diskProbeRunning = true;
+        root._lastDiskProbeMs = now;
         sh(root.scriptDir + "diskusage", function (cmd, out, err, code) {
+            root._diskProbeRunning = false;
+            root._lastDiskProbeMs = Date.now();
             const p = (out || "").split("\x1e");
             root.diskStoreBytes = parseInt((p[0] || "").trim(), 10) || 0;
             root.diskReclaimableBytes = parseInt((p[1] || "").trim(), 10) || 0;
@@ -340,7 +386,9 @@ PlasmoidItem {
     }
 
     function probeSecrets() {
+        root.isLoadingSecrets = true;
         sh(root.scriptDir + "secrets " + shq(plasmoid.configuration.secretsPath) + " " + shq(plasmoid.configuration.secretsSourcePath) + " " + shq(root.flakePath), function (cmd, out, err, code) {
+            root.isLoadingSecrets = false;
             root.parseSopsInfo(out || "");
         });
     }
@@ -363,7 +411,9 @@ PlasmoidItem {
             };
             return;
         }
+        root.isProbingHash = true;
         sh(root.scriptDir + "hash " + shq(mode) + " " + shq(input), function (cmd, out, err, code) {
+            root.isProbingHash = false;
             const raw = (out || "").trim();
             const isError = raw.startsWith("ERROR:");
             root.hashResult = {
@@ -387,7 +437,9 @@ PlasmoidItem {
             return;
         const prev = root.getPreviousGen(genNum);
         const baseNum = prev !== null ? prev : genNum;
+        root.isLoadingConfigDiff = true;
         sh(root.scriptDir + "config-diff " + baseNum + " " + genNum, function (cmd, out, err, code) {
+            root.isLoadingConfigDiff = false;
             const parts = (out || "").split("\x1e");
             const cache = Object.assign({}, root.configDiffCache);
             cache[genNum] = {
@@ -792,7 +844,7 @@ PlasmoidItem {
                 if (count > cmdWatcher.baselineCount) {
                     cmdWatcher.stop();
                     root.refreshGenerations();
-                    root.probeDiskUsage();
+                    root.probeDiskUsage(true);
                     root.notify(i18n("NixOS — %1 finished").arg(cmdWatcher.label), i18n("A new system generation is available."), false);
                 }
             });
@@ -885,7 +937,7 @@ PlasmoidItem {
             if (action === "delete" && root.selectedGenNum === genNum)
                 root.selectedGenNum = -1;
             root.refreshGenerations();
-            root.probeDiskUsage();
+            root.probeDiskUsage(true);
         });
     }
 
@@ -924,7 +976,7 @@ PlasmoidItem {
             root.pushToast(msg, false);
             root.notify(i18n("NixOS — garbage collected"), msg, false);
             root.refreshGenerations();
-            root.probeDiskUsage();
+            root.probeDiskUsage(true);
         });
     }
 
@@ -1186,7 +1238,9 @@ PlasmoidItem {
         refreshGenerations();
         probeSysInfo();
         probeSecrets();
-        probeDiskUsage();
+        // Deliberately no probeDiskUsage() here — it is deferred to the first
+        // time the popup is opened, so a widget that is never clicked never
+        // walks /nix/store.
         if (root.flakePath !== "") {
             root.bootFlakeCheck();
             root.armCacheWatcher();
@@ -1223,8 +1277,12 @@ PlasmoidItem {
             if (plasmoid.configuration.autoRefreshOnOpen) {
                 refreshGenerations();
                 probeSysInfo();
-                probeDiskUsage();
             }
+            // The very first open always populates the disk chips; after that
+            // it follows the auto-refresh preference. Either way it is
+            // TTL-guarded, so reopening the popup does not re-walk the store.
+            if (root._lastDiskProbeMs === 0 || plasmoid.configuration.autoRefreshOnOpen)
+                probeDiskUsage();
         } else {
             // Persist the size the user left the popup at
             if (_lastWidth >= 360 && _lastHeight >= 340) {
@@ -1244,64 +1302,137 @@ PlasmoidItem {
 
     // Cross-instance sync via inotifywait: starts a one-shot shell that blocks
     // until the cache file is modified, then reads and applies it immediately,
-    // then arms itself again. Falls back to a 60s poll if inotifywait is absent.
+    // then arms itself again. Falls back to a slow poll when inotifywait is
+    // missing or unusable.
+    //
+    // The watch command reports its own outcome instead of unconditionally
+    // succeeding: an absent inotifywait, a too-old inotify-tools without
+    // --include, or a missing cache directory used to make the callback fire
+    // instantly, which re-armed instantly, which spawned another shell — a
+    // process-spawn loop that pegs a core for as long as the widget is loaded.
+    // Now a non-"changed" result switches to polling permanently, arming is
+    // never faster than watcherMinArmMs, and a run of suspiciously fast
+    // "changed" results also drops us to polling.
+    readonly property int watcherMinArmMs: 2000
+    readonly property int watcherMaxFastArms: 5
     property bool _watcherArmed: false
+    property bool _watcherDisabled: false
+    property real _watcherArmedAtMs: 0
+    property int _watcherFastArms: 0
 
     function armCacheWatcher() {
-        if (root._watcherArmed || root.flakePath === "")
+        if (root._watcherArmed || root._watcherDisabled || root.flakePath === "")
             return;
         root._watcherArmed = true;
+        root._watcherArmedAtMs = Date.now();
         // Watch the cache directory for writes to our specific filename.
         // Watching the directory means inotifywait works even before the file exists.
         const cacheDir = '"${XDG_CACHE_HOME:-$HOME/.cache}"';
         const cacheName = "nixdatifier-flake-state";
-        sh("inotifywait -e close_write -e moved_to -q --include " + shq(cacheName) + " " + cacheDir + " 2>/dev/null; echo ok", function (cmd, out, err, code) {
+        const probe = "command -v inotifywait >/dev/null 2>&1 || { echo unsupported; exit 0; }; " + "mkdir -p " + cacheDir + " 2>/dev/null; " + "if inotifywait -e close_write -e moved_to -q --include " + shq(cacheName) + " " + cacheDir + " >/dev/null 2>&1; then echo changed; else echo failed; fi";
+        sh(probe, function (cmd, out, err, code) {
             root._watcherArmed = false;
-            // inotifywait not available — fall back to polling
-            if ((out || "").trim() !== "ok") {
-                flakeCacheFallbackTimer.start();
+            const result = (out || "").trim();
+
+            if (result !== "changed") {
+                // No usable watch (no inotifywait, unsupported flags, bad dir).
+                root.fallBackToCachePolling();
                 return;
             }
-            if (!root.isCheckingFlake) {
-                root.readFlakeCache(function (ts, tsv) {
-                    if (ts > root._lastFlakeCacheTs)
-                        root.applyFlakeCache(ts, tsv);
-                });
+
+            // A real close_write can legitimately arrive quickly, but a *run*
+            // of near-instant returns means the watch is not actually blocking.
+            if (Date.now() - root._watcherArmedAtMs < root.watcherMinArmMs) {
+                root._watcherFastArms += 1;
+                if (root._watcherFastArms >= root.watcherMaxFastArms) {
+                    root.fallBackToCachePolling();
+                    return;
+                }
+            } else {
+                root._watcherFastArms = 0;
             }
-            root.armCacheWatcher();
+
+            if (!root.isCheckingFlake)
+                root.syncFlakeCache();
+
+            // Re-arm off a timer, never straight from the callback, so there is
+            // always a floor on how often we can spawn the watch process.
+            watcherRearmTimer.restart();
         });
     }
 
-    // Fallback poll used only when inotifywait is unavailable.
+    function fallBackToCachePolling() {
+        root._watcherDisabled = true;
+        watcherRearmTimer.stop();
+        flakeCacheFallbackTimer.start();
+    }
+
+    function syncFlakeCache() {
+        root.readFlakeCache(function (ts, tsv) {
+            if (ts > root._lastFlakeCacheTs)
+                root.applyFlakeCache(ts, tsv);
+        });
+    }
+
+    // Enforces watcherMinArmMs between two consecutive watch processes.
+    Timer {
+        id: watcherRearmTimer
+        interval: root.watcherMinArmMs
+        repeat: false
+        onTriggered: root.armCacheWatcher()
+    }
+
+    // Fallback poll used only when inotifywait is unavailable or unusable.
+    // Cross-instance flake state is not urgent, so this is deliberately slow:
+    // it is a `cat` of a small file, but there is no reason to do it every
+    // minute for the life of the session.
     Timer {
         id: flakeCacheFallbackTimer
-        interval: 60000
+        interval: 300000
         repeat: true
         running: false
         onTriggered: {
             if (root.isCheckingFlake)
                 return;
-            root.readFlakeCache(function (ts, tsv) {
-                if (ts > root._lastFlakeCacheTs)
-                    root.applyFlakeCache(ts, tsv);
-            });
+            root.syncFlakeCache();
         }
     }
 
+    // sysinfo is cheap (reads /proc and two small files), but there is no point
+    // refreshing it every 5 minutes when nothing is on screen — while the popup
+    // is closed it only backs the panel tooltip, so a slow tick is plenty.
     Timer {
-        interval: 300000
+        interval: root.expanded ? 300000 : 1800000
         running: true
         repeat: true
         onTriggered: root.probeSysInfo()
     }
 
-    // Disk usage is expensive (du + nix-collect-garbage --dry-run) — poll slowly.
+    // Guards against a probe whose callback never arrives leaving the panel
+    // spinner rotating (and therefore repainting the panel) forever. Only the
+    // short-lived read probes are covered — isBusy belongs to user-initiated
+    // rebuilds, which are legitimately allowed to take a long time.
     Timer {
-        interval: 600000
-        running: true
-        repeat: true
-        onTriggered: root.probeDiskUsage()
+        interval: 120000
+        repeat: false
+        running: root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isLoadingSecrets || root.isLoadingConfigDiff
+        onTriggered: {
+            root.isLoadingGens = false;
+            root.isLoadingDetails = false;
+            root.isLoadingPairDiff = false;
+            root.isCheckingFlake = false;
+            root.isDryRunning = false;
+            root.isProbingHash = false;
+            root.isLoadingSecrets = false;
+            root.isLoadingConfigDiff = false;
+        }
     }
+
+    // True only while the popup is actually on screen. Threaded down through
+    // the view tree so looping animations can stop when nobody can see them —
+    // a QML animation left running keeps the render loop ticking whether or
+    // not its item is visible.
+    readonly property bool uiActive: root.expanded
 
     // ── Compact representation ────────────────────────────────────────────────
     compactRepresentation: CompactView {
@@ -1311,6 +1442,7 @@ PlasmoidItem {
         flakeUpdates: root.flakeUpdates
         isBusy: root.isBusy
         isLoadingGens: root.isLoadingGens
+        isSpinning: root.isSpinning
         compactStyle: plasmoid.configuration.compactStyle || "icon"
         compactShowBadge: plasmoid.configuration.compactShowBadge
         iconStyle: root.iconStyle
@@ -1319,6 +1451,7 @@ PlasmoidItem {
 
     // ── Full representation ───────────────────────────────────────────────────
     fullRepresentation: FullView {
+        uiActive: root.uiActive
         accentColor: root.accentColor
         timelineColor: root.timelineColor
         textColor: root.textColor
@@ -1359,6 +1492,7 @@ PlasmoidItem {
         diskReclaimableBytes: root.diskReclaimableBytes
         diskFreeBytes: root.diskFreeBytes
         hashResult: root.hashResult
+        isProbingHash: root.isProbingHash
         pendingGenNum: root.pendingGenNum
         pendingAction: root.pendingAction
         pendingCleanup: root.pendingCleanup

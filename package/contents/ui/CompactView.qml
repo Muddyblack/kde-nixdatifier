@@ -21,6 +21,7 @@ Item {
     required property var flakeUpdates
     required property bool isBusy
     required property bool isLoadingGens
+    property bool isSpinning: isBusy || isLoadingGens
     required property string compactStyle
     required property bool compactShowBadge
     required property string iconStyle
@@ -63,7 +64,7 @@ Item {
 
     Kirigami.Icon {
         id: compactIconImage
-        visible: compactRoot.compactStyle !== "number" && compactRoot.logoUseImage
+        visible: !compactRoot.isSpinning && compactRoot.compactStyle !== "number" && compactRoot.logoUseImage
         source: Qt.resolvedUrl("nixos-logo.svg")
         isMask: false
         anchors.centerIn: parent
@@ -74,7 +75,7 @@ Item {
 
     Kirigami.Icon {
         id: compactIcon
-        visible: compactRoot.compactStyle !== "number" && !compactRoot.logoUseImage
+        visible: !compactRoot.isSpinning && compactRoot.compactStyle !== "number" && !compactRoot.logoUseImage
         source: Qt.resolvedUrl("nixos-logo.svg")
         isMask: true
         color: compactRoot.logoColor
@@ -90,7 +91,7 @@ Item {
     }
 
     Text {
-        visible: compactRoot.compactStyle !== "icon" && compactRoot.activeGenNum > 0
+        visible: compactRoot.compactStyle !== "icon" && compactRoot.activeGenNum > 0 && (compactRoot.compactStyle !== "number" || !compactRoot.isSpinning)
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.bottom: parent.bottom
         anchors.bottomMargin: compactRoot.compactStyle === "both" ? 3 : 0
@@ -138,11 +139,12 @@ Item {
     Kirigami.Icon {
         id: compactSpinnerImage
         anchors.centerIn: parent
-        visible: (compactRoot.isBusy || compactRoot.isLoadingGens) && compactRoot.logoUseImage
+        visible: compactRoot.isSpinning && compactRoot.logoUseImage
         source: Qt.resolvedUrl("nixos-logo.svg")
         isMask: false
-        implicitWidth: parent.width - 6
-        implicitHeight: parent.height - 6
+        implicitWidth: compactRoot.compactStyle === "both" ? parent.width * 0.55 : parent.width - 10
+        implicitHeight: implicitWidth
+        anchors.verticalCenterOffset: compactRoot.compactStyle === "both" ? -4 : 0
         RotationAnimation on rotation {
             running: compactSpinnerImage.visible
             from: 0
@@ -155,12 +157,13 @@ Item {
     Kirigami.Icon {
         id: compactSpinner
         anchors.centerIn: parent
-        visible: (compactRoot.isBusy || compactRoot.isLoadingGens) && !compactRoot.logoUseImage
+        visible: compactRoot.isSpinning && !compactRoot.logoUseImage
         source: Qt.resolvedUrl("nixos-logo.svg")
         isMask: true
         color: compactRoot.logoColor
-        width: parent.width - 6
-        height: parent.height - 6
+        implicitWidth: compactRoot.compactStyle === "both" ? parent.width * 0.55 : parent.width - 10
+        implicitHeight: implicitWidth
+        anchors.verticalCenterOffset: compactRoot.compactStyle === "both" ? -4 : 0
         RotationAnimation on rotation {
             running: compactSpinner.visible
             from: 0

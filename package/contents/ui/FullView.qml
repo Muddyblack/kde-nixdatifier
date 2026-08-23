@@ -19,6 +19,10 @@ Item {
     }
 
     // ── Required properties ───────────────────────────────────────────────────
+    // False while the popup is closed. Looping animations gate on it so a
+    // hidden popup costs nothing; defaults to true so the view still animates
+    // if it is ever hosted somewhere that does not thread the flag down.
+    property bool uiActive: true
     required property color accentColor
     required property color timelineColor
     required property color textColor
@@ -101,6 +105,7 @@ Item {
     property var configDiffCache: ({})
     property var dryRunCache: ({})
     property bool isDryRunning: false
+    property bool isProbingHash: false
     property string diffViewMode: "compact"   // "compact" | "detailed"
     property var iconCache: ({})
     property var metaCache: ({})
@@ -1011,7 +1016,7 @@ Item {
                     implicitWidth: 18
                     implicitHeight: 18
                     RotationAnimation on rotation {
-                        running: busyBarSpinner.visible
+                        running: busyBarSpinner.visible && fullView.uiActive
                         from: 0
                         to: 360
                         duration: 1400
@@ -1169,6 +1174,7 @@ Item {
 
             TimelineTab {
                 id: timelineTab
+                uiActive: fullView.uiActive
                 anchors.fill: parent
                 activeViewMode: fullView.activeViewMode
                 accentColor: fullView.accentColor
@@ -1204,6 +1210,7 @@ Item {
             }
 
             UpdatesTab {
+                uiActive: fullView.uiActive
                 activeViewMode: fullView.activeViewMode
                 accentColor: fullView.accentColor
                 textColor: fullView.textColor
@@ -1253,12 +1260,14 @@ Item {
             }
 
             HashTab {
+                uiActive: fullView.uiActive
                 activeViewMode: fullView.activeViewMode
                 accentColor: fullView.accentColor
                 textColor: fullView.textColor
                 fs: fullView.fs
                 iconStyle: fullView.iconStyle
                 hashResult: fullView.hashResult
+                isProbingHash: fullView.isProbingHash
 
                 onHashRequested: (mode, input) => fullView.hashRequested(mode, input)
                 onCopyToClipboard: t => fullView.copyToClipboard(t)

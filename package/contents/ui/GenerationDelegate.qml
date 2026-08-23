@@ -8,6 +8,8 @@ Item {
     id: genDelegate
 
     property var gen: ({})
+    // See FullView.uiActive — false while the popup is closed.
+    property bool uiActive: true
     property color accentColor: "transparent"
     property color timelineColor: "transparent"
     property color textColor: "white"
@@ -119,7 +121,13 @@ Item {
             border.color: nodeDot.color
             border.width: 1.5
             visible: gen.booted
+            // Gated on both the ring's own visibility and uiActive. Without a
+            // `running` binding this pulse ran for the entire life of the
+            // widget — including while the popup was closed and while the ring
+            // was hidden — keeping the animation driver awake and forcing a
+            // repaint every frame for a dot nobody could see.
             SequentialAnimation on opacity {
+                running: bootedPulse.visible && genDelegate.uiActive
                 loops: Animation.Infinite
                 NumberAnimation {
                     from: 0.75
@@ -350,7 +358,7 @@ Item {
                 implicitWidth: 18
                 implicitHeight: 18
                 RotationAnimation on rotation {
-                    running: detailsSpinner.visible
+                    running: detailsSpinner.visible && genDelegate.uiActive
                     from: 0
                     to: 360
                     duration: 1200

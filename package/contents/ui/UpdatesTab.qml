@@ -7,6 +7,8 @@ Item {
     id: updatesTab
 
     // ── Required properties ───────────────────────────────────────────────────
+    // See FullView.uiActive — false while the popup is closed.
+    property bool uiActive: true
     required property color accentColor
     required property color textColor
     required property real fs
@@ -75,7 +77,7 @@ Item {
                 implicitWidth: 18
                 implicitHeight: 18
                 RotationAnimation on rotation {
-                    running: updateSpinner.visible
+                    running: updateSpinner.visible && updatesTab.uiActive
                     from: 0
                     to: 360
                     duration: 1400
@@ -238,7 +240,7 @@ Item {
                                 implicitHeight: 12
                                 color: "#cc88ff"
                                 RotationAnimation on rotation {
-                                    running: previewBtn.isLoading
+                                    running: previewBtn.isLoading && updatesTab.uiActive
                                     from: 0
                                     to: 360
                                     duration: 1000

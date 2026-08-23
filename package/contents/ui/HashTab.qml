@@ -7,12 +7,15 @@ Item {
     id: hashTab
 
     // ── Required properties ───────────────────────────────────────────────────
+    // See FullView.uiActive — false while the popup is closed.
+    property bool uiActive: true
     required property color accentColor
     required property color textColor
     required property real fs
     required property string iconStyle
     required property var hashResult
     required property string activeViewMode
+    property bool isProbingHash: false
 
     function fpx(n) {
         return Math.max(1, Math.round(n / 9.0 * Kirigami.Theme.smallFont.pixelSize * fs));
@@ -181,7 +184,7 @@ Item {
                 id: hashRunButton
                 text: hashSpinner.visible ? "" : i18n("Get Hash")
                 implicitHeight: 28
-                enabled: hashInputField.text.trim() !== "" && !hashSpinner.visible
+                enabled: hashInputField.text.trim() !== "" && !hashTab.isProbingHash
                 font.pixelSize: hashTab.fpx(9)
                 font.bold: true
 
@@ -211,11 +214,11 @@ Item {
                                 return "#000000";
                             return hashTab.accentColor;
                         }
-                        visible: false
+                        visible: hashTab.isProbingHash
                         implicitWidth: 14
                         implicitHeight: 14
                         RotationAnimation on rotation {
-                            running: hashSpinner.visible
+                            running: hashSpinner.visible && hashTab.uiActive
                             from: 0
                             to: 360
                             duration: 1200

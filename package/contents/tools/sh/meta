@@ -109,8 +109,10 @@ done
 # name as opaque data, so a malicious pname like `${builtins.readFile "/etc/…"}`
 # cannot trigger code evaluation. The names_re filter above is the first line
 # of defence; this is the second.
+# Step 4 can only read this result through jq, so without jq the eval below is
+# pure waste — and it is not cheap waste: it instantiates all of nixpkgs.
 homepage_json=""
-if [ "${#unique[@]}" -gt 0 ]; then
+if [ "${#unique[@]}" -gt 0 ] && command -v jq >/dev/null 2>&1; then
     names_file=$(mktemp -t meta-names.XXXXXX.json) || exit 0
     trap 'rm -f "$names_file"' EXIT
     # Build a JSON array of names. python3 is in current-system; fall back to
@@ -154,54 +156,88 @@ json.dump([l.rstrip("\n") for l in sys.stdin if l.strip()], sys.stdout)
                       in if b != null then b
                          else tryAttr "plasma5Packages" name;
           in builtins.listToAttrs (map (n: { name = n; value = lookup n; }) names)'
-    homepage_json=$(META_NAMES_FILE="$names_file" timeout 20 nix eval --json --impure --expr "$expr" 2>/dev/null || true)
+    # `nice`d: a full nixpkgs instantiation is seconds of pegged CPU, and it is
+    # triggered by something as ordinary as expanding a generation's diff.
+    homepage_json=$(META_NAMES_FILE="$names_file" timeout 20 nice -n 19 nix eval --json --impure --expr "$expr" 2>/dev/null || true)
 fi
 
-# ── 3. Fallback: direct /nix/store scan for any pkg not matched yet ───────
-# Useful for plasmoids built but not currently linked into a plasma dir.
-store_lookup() {
-    local pname="$1"
-    [ -z "$pname" ] && return
-    # Glob /nix/store for entries starting with hash-pname-<ver>/
-    local cand
-    for cand in /nix/store/*-"$pname"-[0-9]*; do
+# ── 3. Resolve from the cheap sources, collecting whatever is still unknown ─
+declare -A resolved_url=()
+declare -A resolved_src=()
+pending=()
+
+for p in "${unique[@]}"; do
+    # Plasmoid match wins for user-built widgets — it points at the actual
+    # upstream repo, not a nixpkgs search page.
+    if [ -n "${plasmoid_url[$p]:-}" ]; then
+        resolved_url["$p"]="${plasmoid_url[$p]}"
+        resolved_src["$p"]="plasmoid"
+        continue
+    fi
+    # nixpkgs meta.homepage from the batched eval
+    if [ -n "$homepage_json" ]; then
+        url=$(printf '%s' "$homepage_json" | jq -r --arg n "$p" '.[$n] // ""' 2>/dev/null)
+        if [ -n "$url" ] && [ "$url" != "null" ]; then
+            resolved_url["$p"]="$url"
+            resolved_src["$p"]="nixpkgs"
+            continue
+        fi
+    fi
+    pending+=("$p")
+done
+
+# ── 4. Last resort: one bounded /nix/store scan for built-but-unlinked widgets
+# This used to be a per-package glob (`/nix/store/*-$pname-[0-9]*`) evaluated
+# inside the emit loop, which made bash re-expand the entire store directory
+# once per unresolved package — O(packages x store entries). On a real store
+# (hundreds of thousands of entries) a single diff of a couple hundred packages
+# pegged a core for minutes. Now it is a single readdir pass shared by every
+# pending name, and only when there are few enough of them to be plausibly
+# about plasmoids at all.
+STORE_SCAN_MAX_NAMES="${META_STORE_SCAN_MAX_NAMES:-25}"
+
+if [ "${#pending[@]}" -gt 0 ] && [ "${#pending[@]}" -le "$STORE_SCAN_MAX_NAMES" ]; then
+    # Build one find expression: -name '*-a-[0-9]*' -o -name '*-b-[0-9]*' …
+    find_args=()
+    for p in "${pending[@]}"; do
+        [ "${#find_args[@]}" -gt 0 ] && find_args+=(-o)
+        find_args+=(-name "*-$p-[0-9]*")
+    done
+
+    while IFS= read -r cand; do
         [ -d "$cand" ] || continue
-        local mfile
-        mfile=$(find "$cand" -name "metadata.json" -path "*plasmoids*" 2>/dev/null | head -n1)
+        # Plasmoids always live at share/plasma/plasmoids/<id>/metadata.json,
+        # so look there directly instead of walking the whole store path.
+        mfile=$(find "$cand/share/plasma/plasmoids" -maxdepth 2 -name "metadata.json" 2>/dev/null | head -n1)
         [ -z "$mfile" ] && continue
-        local url=""
+
+        url=""
         if command -v jq >/dev/null 2>&1; then
             url=$(jq -r '.KPlugin.Website // ""' "$mfile" 2>/dev/null)
         else
             url=$(grep -oP '"Website"\s*:\s*"\K[^"]+' "$mfile" | head -n1)
         fi
-        if [ -n "$url" ]; then
-            echo "$url"
-            return
-        fi
-    done
-}
+        [ -z "$url" ] && continue
 
-# ── 4. Emit results ───────────────────────────────────────────────────────
+        # Map the store entry back to whichever pending name it matched.
+        base="${cand##*/}"
+        for p in "${pending[@]}"; do
+            [ -n "${resolved_url[$p]:-}" ] && continue
+            case "$base" in
+                *-"$p"-[0-9]*)
+                    resolved_url["$p"]="$url"
+                    resolved_src["$p"]="plasmoid"
+                    break
+                    ;;
+            esac
+        done
+    done < <(find /nix/store -maxdepth 1 \( "${find_args[@]}" \) 2>/dev/null)
+fi
+
+# ── 5. Emit results ───────────────────────────────────────────────────────
 for p in "${unique[@]}"; do
-    # Plasmoid match wins for user-built widgets — it points at the actual
-    # upstream repo, not a nixpkgs search page.
-    if [ -n "${plasmoid_url[$p]:-}" ]; then
-        printf '%s\t%s\t%s\n' "$p" "${plasmoid_url[$p]}" "plasmoid"
-        continue
-    fi
-    # nixpkgs meta.homepage from the batched eval
-    if [ -n "$homepage_json" ] && command -v jq >/dev/null 2>&1; then
-        url=$(printf '%s' "$homepage_json" | jq -r --arg n "$p" '.[$n] // ""' 2>/dev/null)
-        if [ -n "$url" ] && [ "$url" != "null" ]; then
-            printf '%s\t%s\t%s\n' "$p" "$url" "nixpkgs"
-            continue
-        fi
-    fi
-    # Last resort: scan the store for a built-but-unlinked plasmoid
-    store_url=$(store_lookup "$p")
-    if [ -n "$store_url" ]; then
-        printf '%s\t%s\t%s\n' "$p" "$store_url" "plasmoid"
+    if [ -n "${resolved_url[$p]:-}" ]; then
+        printf '%s\t%s\t%s\n' "$p" "${resolved_url[$p]}" "${resolved_src[$p]:-}"
     fi
 done
 
