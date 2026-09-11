@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
+import QtQuick.Effects
 import "shared" as UI
 import "components"
 
@@ -29,7 +30,7 @@ Pane {
 
     // Keep the shared layout consistent while honoring the user's font scale.
     function fpx(n) {
-        return Math.max(1, Math.round(Math.max(9, n) * fs));
+        return UI.Theme.fontPx(n, fs);
     }
 
     // ── Required properties ───────────────────────────────────────────────────
@@ -56,7 +57,6 @@ Pane {
     required property int bootedGenNum
     required property int selectedGenNum
     required property var detailsCache
-    required property string diffFilter
     required property string diffMode
     required property bool showDeleteButton
     required property bool diffFilterEnabled
@@ -64,13 +64,11 @@ Pane {
     required property bool showCommandButtons
     required property var customCommands
     property string gcCustomCommand: ""
-    required property string actionType
-    required property int actionGenNum
-    required property string activeViewMode   // "timeline" | "updates" | "diff" | "secrets" | "hash"
-    required property var sopsStatus         // legacy alias → deployedSecrets
+    required property string activeViewMode   // "timeline" | "updates" | "diff" | "tools" | "secrets" | "hash" | "history" | "storeusage"
     required property var deployedSecrets  // { path, exists, lastModified, age }
     required property var sourceSecrets    // { path, exists, lastModified, kind }
     required property string hostname
+    required property string userFacePath
     required property string nixosVersion
     required property string lastActivationTime
     required property string uptime
@@ -79,17 +77,8 @@ Pane {
     required property real diskReclaimableBytes
     required property real diskFreeBytes
 
-    function formatBytes(bytes) {
-        if (!bytes || bytes <= 0)
-            return "";
-        const units = ["B", "KB", "MB", "GB", "TB"];
-        let i = 0, v = bytes;
-        while (v >= 1024 && i < units.length - 1) {
-            v /= 1024;
-            i++;
-        }
-        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
-    }
+    readonly property string storeLabel: UI.Theme.formatBytes(diskStoreBytes) || "—"
+    readonly property string reclaimableLabel: diskReclaimableBytes < 0 ? "—" : diskReclaimableBytes === 0 ? "0 B" : UI.Theme.formatBytes(diskReclaimableBytes)
 
     // Invoked from a timeline card's right-click "Compare with…" menu.
     // Switches to the Diff tab, pre-populates A and B, and triggers the diff fetch.
@@ -102,7 +91,6 @@ Pane {
     // Pending action for inline confirm bar
     property int pendingGenNum: -1
     property string pendingAction: ""
-    property bool usePkexec: false
     property string pendingCleanup: ""
 
     // Pairwise diff state for the Diff tab
@@ -121,6 +109,14 @@ Pane {
     // empty string = no result yet / cleared
     property var hashResult: null
 
+    // ── Rebuild history state ────────────────────────────────────────────────
+    property var actionHistory: []
+    property bool isLoadingHistory: false
+
+    // ── Store usage tool state ───────────────────────────────────────────────
+    property var storeUsageResult: null
+    property bool isProbingStoreUsage: false
+
     signal viewModeChanged(string mode)
     signal refreshRequested
     signal checkFlakeRequested
@@ -128,11 +124,12 @@ Pane {
     signal collapseGen
     signal requestAction(int genNum, string action)
     signal diffModeToggle(int genNum)
-    signal filterChanged(string text)
     signal runCommand(string cmd, string label)
     signal copyToClipboard(string text)
     signal dismissToast(int index)
     signal hashRequested(string mode, string input)
+    signal clearHistoryRequested
+    signal storeUsageRequested(string path)
     signal confirmPending
     signal cancelPending
     signal cleanupVariantPicked(string mode)
@@ -163,8 +160,35 @@ Pane {
     property bool enableGlow: true
     property bool enableMotion: true
     property bool enableLiveSwitch: true
-    readonly property bool inTools: ["tools", "hash", "secrets"].indexOf(activeViewMode) >= 0
-    readonly property bool toolsOverlayOpen: activeViewMode === "hash" || activeViewMode === "secrets"
+    readonly property var tools: [
+        {
+            key: "secrets",
+            label: qsTr("Secrets"),
+            hint: qsTr("Inspect deployed and source secrets."),
+            glyph: "ic_secrets"
+        },
+        {
+            key: "hash",
+            label: qsTr("Hash calculator"),
+            hint: qsTr("Hashes for URLs, files, and store paths."),
+            glyph: "ic_hash"
+        },
+        {
+            key: "history",
+            label: qsTr("Rebuild history"),
+            hint: qsTr("Review past rebuild and update output."),
+            glyph: "ic_history"
+        },
+        {
+            key: "storeusage",
+            label: qsTr("Store usage"),
+            hint: qsTr("See why a store path can't be collected."),
+            glyph: "ic_search"
+        }
+    ]
+    readonly property var activeTool: tools.find(t => t.key === activeViewMode) || null
+    readonly property bool inTools: activeViewMode === "tools" || activeTool !== null
+    readonly property bool toolsOverlayOpen: inTools && activeViewMode !== "tools"
     function openCleanup() {
         cleanupMenu.open();
     }
@@ -344,7 +368,32 @@ Pane {
                 spacing: 12
                 Row {
                     spacing: 5
+                    Item {
+                        visible: !!fullView.userFacePath
+                        width: 12
+                        height: 12
+                        Image {
+                            id: faceImage
+                            anchors.fill: parent
+                            source: fullView.userFacePath ? "file://" + fullView.userFacePath : ""
+                            fillMode: Image.PreserveAspectCrop
+                            visible: false
+                        }
+                        Rectangle {
+                            id: faceMask
+                            anchors.fill: parent
+                            radius: width / 2
+                            visible: false
+                        }
+                        MultiEffect {
+                            anchors.fill: parent
+                            source: faceImage
+                            maskEnabled: true
+                            maskSource: faceMask
+                        }
+                    }
                     UI.Icon {
+                        visible: !fullView.userFacePath
                         source: "user-identity"
                         width: 12
                         height: 12
@@ -521,7 +570,6 @@ Pane {
                 bootedGenNum: fullView.bootedGenNum
                 activeGenNum: fullView.activeGenNum
                 detailsCache: fullView.detailsCache
-                diffFilter: fullView.diffFilter
                 diffMode: fullView.diffMode
                 showDeleteButton: fullView.showDeleteButton
                 diffFilterEnabled: fullView.diffFilterEnabled
@@ -535,7 +583,6 @@ Pane {
                 onCollapseGen: () => fullView.collapseGen()
                 onRequestAction: (n, a) => fullView.requestAction(n, a)
                 onDiffModeToggle: n => fullView.diffModeToggle(n)
-                onFilterChanged: t => fullView.filterChanged(t)
                 onCopyToClipboard: t => fullView.copyToClipboard(t)
                 onCompareWithRequested: (a, b) => fullView.openCompareInDiffTab(a, b)
                 onRefreshRequested: () => fullView.refreshRequested()
@@ -609,20 +656,7 @@ Pane {
                         Layout.bottomMargin: 17
                         spacing: 10
                         Repeater {
-                            model: [
-                                {
-                                    key: "secrets",
-                                    label: qsTr("Secrets"),
-                                    hint: qsTr("Inspect deployed and source secrets."),
-                                    glyph: "ic_secrets"
-                                },
-                                {
-                                    key: "hash",
-                                    label: qsTr("Hash calculator"),
-                                    hint: qsTr("Hashes for URLs, files, and store paths."),
-                                    glyph: "ic_hash"
-                                }
-                            ]
+                            model: fullView.tools
                             AbstractButton {
                                 id: toolButton
                                 required property var modelData
@@ -690,7 +724,7 @@ Pane {
                                     font.pixelSize: 10 * fullView.fs
                                 }
                                 Text {
-                                    text: fullView.formatBytes(fullView.diskStoreBytes) || "—"
+                                    text: fullView.storeLabel
                                     color: "#93a5bd"
                                     font.pixelSize: 9 * fullView.fs
                                 }
@@ -724,12 +758,12 @@ Pane {
                                 Layout.fillWidth: true
                                 Text {
                                     Layout.fillWidth: true
-                                    text: qsTr("%1 free").arg(fullView.formatBytes(fullView.diskFreeBytes) || "—")
+                                    text: qsTr("%1 free").arg(UI.Theme.formatBytes(fullView.diskFreeBytes) || "—")
                                     color: "#8fa0b7"
                                     font.pixelSize: 9 * fullView.fs
                                 }
                                 Text {
-                                    text: qsTr("%1 reclaimable").arg(fullView.diskReclaimableBytes < 0 ? "—" : fullView.diskReclaimableBytes === 0 ? "0 B" : fullView.formatBytes(fullView.diskReclaimableBytes))
+                                    text: qsTr("%1 reclaimable").arg(fullView.reclaimableLabel)
                                     color: UI.Theme.changed
                                     font.pixelSize: 9 * fullView.fs
                                 }
@@ -774,7 +808,7 @@ Pane {
                     objectName: "footerStatus"
                     Layout.fillWidth: true
                     elide: Text.ElideRight
-                    readonly property string storage: (fullView.formatBytes(fullView.diskStoreBytes) || "—") + qsTr(" store  ·  %1 reclaimable").arg(fullView.diskReclaimableBytes < 0 ? "—" : fullView.diskReclaimableBytes === 0 ? "0 B" : fullView.formatBytes(fullView.diskReclaimableBytes))
+                    readonly property string storage: fullView.storeLabel + qsTr(" store  ·  %1 reclaimable").arg(fullView.reclaimableLabel)
                     text: fullView.isSpinning ? fullView.busyLabel || qsTr("Working…") : storage
                     color: fullView.isSpinning ? fullView.accentColor : "#8f9db0"
                     font.pixelSize: 9 * fullView.fs
@@ -954,7 +988,7 @@ Pane {
                 }
                 Text {
                     Layout.fillWidth: true
-                    text: fullView.activeViewMode === "hash" ? qsTr("Hash calculator") : qsTr("Secrets")
+                    text: fullView.activeTool ? fullView.activeTool.label : ""
                     color: fullView.textColor
                     font.pixelSize: 14 * fullView.fs
                     font.weight: Font.Medium
@@ -993,6 +1027,30 @@ Pane {
                     isProbingHash: fullView.isProbingHash
 
                     onHashRequested: (mode, input) => fullView.hashRequested(mode, input)
+                    onCopyToClipboard: t => fullView.copyToClipboard(t)
+                }
+                HistoryTab {
+                    anchors.fill: parent
+                    activeViewMode: fullView.activeViewMode
+                    accentColor: fullView.accentColor
+                    textColor: fullView.textColor
+                    fs: fullView.fs
+                    actionHistory: fullView.actionHistory
+                    isLoadingHistory: fullView.isLoadingHistory
+
+                    onClearHistoryRequested: fullView.clearHistoryRequested()
+                    onCopyToClipboard: t => fullView.copyToClipboard(t)
+                }
+                StoreUsageTab {
+                    anchors.fill: parent
+                    activeViewMode: fullView.activeViewMode
+                    accentColor: fullView.accentColor
+                    textColor: fullView.textColor
+                    fs: fullView.fs
+                    storeUsageResult: fullView.storeUsageResult
+                    isProbingStoreUsage: fullView.isProbingStoreUsage
+
+                    onStoreUsageRequested: path => fullView.storeUsageRequested(path)
                     onCopyToClipboard: t => fullView.copyToClipboard(t)
                 }
             }

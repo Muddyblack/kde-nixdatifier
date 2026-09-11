@@ -17,9 +17,12 @@ Item {
     required property var hashResult
     required property string activeViewMode
     property bool isProbingHash: false
+    property string mode: "url"
+    // SRI form (sha256-…) of the current result, as converted by Nix.
+    property string sri: ""
 
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * (UI.Theme.smallFont.pixelSize > 0 ? UI.Theme.smallFont.pixelSize : 11) * fs));
+        return UI.Theme.fontPx(n, fs);
     }
 
     signal hashRequested(string mode, string input)
@@ -67,7 +70,7 @@ Item {
                 ]
 
                 Rectangle {
-                    readonly property bool active: hashModeHolder.value === modelData.id
+                    readonly property bool active: hashTab.mode === modelData.id
                     radius: 4
                     height: 24
                     width: modeLbl.implicitWidth + 14
@@ -99,10 +102,9 @@ Item {
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
                         onClicked: {
-                            hashModeHolder.value = modelData.id;
+                            hashTab.mode = modelData.id;
                             hashInputField.text = "";
-                            hashResultField.text = "";
-                            hashResultField.isError = false;
+                            hashTab.clearResult();
                         }
                     }
                 }
@@ -111,13 +113,6 @@ Item {
             Item {
                 Layout.fillWidth: true
             }
-        }
-
-        // Hidden mode holder (no visual, just state)
-        Item {
-            id: hashModeHolder
-            visible: false
-            property string value: "url"
         }
 
         Rectangle {
@@ -130,7 +125,7 @@ Item {
         Text {
             Layout.fillWidth: true
             text: {
-                switch (hashModeHolder.value) {
+                switch (hashTab.mode) {
                 case "url":
                     return qsTr("https://example.com/file.tar.gz");
                 case "zip":
@@ -190,9 +185,8 @@ Item {
                 font.bold: true
 
                 onClicked: {
-                    hashResultField.text = "";
-                    hashResultField.isError = false;
-                    hashTab.hashRequested(hashModeHolder.value, hashInputField.text.trim());
+                    hashTab.clearResult();
+                    hashTab.hashRequested(hashTab.mode, hashInputField.text.trim());
                 }
 
                 background: Rectangle {
@@ -204,27 +198,15 @@ Item {
                 contentItem: RowLayout {
                     anchors.centerIn: parent
                     spacing: 6
-                    UI.Icon {
+                    UI.Flake {
                         id: hashSpinner
-                        source: Qt.resolvedUrl("nixos-logo.svg")
-                        isMask: hashTab.iconStyle !== "colored"
-                        color: {
-                            if (hashTab.iconStyle === "white")
-                                return "#ffffff";
-                            if (hashTab.iconStyle === "black")
-                                return "#000000";
-                            return hashTab.accentColor;
-                        }
                         visible: hashTab.isProbingHash
                         implicitWidth: 14
                         implicitHeight: 14
-                        RotationAnimation on rotation {
-                            running: hashSpinner.visible && hashTab.uiActive && hashTab.enableMotion
-                            from: 0
-                            to: 360
-                            duration: 1200
-                            loops: Animation.Infinite
-                        }
+                        working: visible && hashTab.uiActive
+                        motion: hashTab.enableMotion
+                        style: hashTab.iconStyle
+                        accent: hashTab.accentColor
                     }
                     Text {
                         visible: !hashSpinner.visible
@@ -295,7 +277,7 @@ Item {
         // ── SRI format toggle + formatted output ──────────────────
         RowLayout {
             Layout.fillWidth: true
-            visible: hashResultField.text !== "" && !hashResultField.isError && !hashResultField.text.startsWith("sha256:") && !hashResultField.text.startsWith("sha256-")
+            visible: hashTab.sri !== "" && hashTab.sri !== hashResultField.text
             spacing: 8
 
             Text {
@@ -309,7 +291,7 @@ Item {
                 id: sriField
                 readOnly: true
                 selectByMouse: true
-                text: hashResultField.text !== "" && !hashResultField.isError ? "sha256-" + Qt.btoa(hashResultField.text.replace(/([0-9a-f]{2})/gi, (m, h) => String.fromCharCode(parseInt(h, 16)))) : ""
+                text: hashTab.sri
                 font.pixelSize: hashTab.fpx(8)
                 font.family: UI.Theme.fixedWidthFont.family
                 color: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.85)
@@ -374,19 +356,22 @@ Item {
                                 return "";
                             const h = hashResultField.text;
                             const input = hashInputField.text.trim();
-                            switch (hashModeHolder.value) {
+                            // Current nixpkgs prefers `hash = "sha256-…"`; keep the
+                            // legacy attribute only when Nix could not convert.
+                            const attr = hashTab.sri ? '  hash = "' + hashTab.sri + '";' : '  sha256 = "' + h + '";';
+                            switch (hashTab.mode) {
                             case "url":
-                                return 'fetchurl {\n  url = "' + input + '";\n  sha256 = "' + h + '";\n}';
+                                return 'fetchurl {\n  url = "' + input + '";\n' + attr + '\n}';
                             case "zip":
-                                return 'fetchzip {\n  url = "' + input + '";\n  sha256 = "' + h + '";\n}';
+                                return 'fetchzip {\n  url = "' + input + '";\n' + attr + '\n}';
                             case "github":
                                 {
                                     const parts = input.split("/");
-                                    return 'fetchFromGitHub {\n  owner = "' + (parts[0] || "") + '";\n  repo  = "' + (parts[1] || "") + '";\n  rev   = "' + (parts.slice(2).join("/") || "") + '";\n  sha256 = "' + h + '";\n}';
+                                    return 'fetchFromGitHub {\n  owner = "' + (parts[0] || "") + '";\n  repo = "' + (parts[1] || "") + '";\n  rev = "' + (parts.slice(2).join("/") || "") + '";\n' + attr + '\n}';
                                 }
                             case "file":
                             case "store":
-                                return '# sha256: ' + h;
+                                return '# ' + (hashTab.sri || 'sha256: ' + h);
                             default:
                                 return h;
                             }
@@ -422,13 +407,19 @@ Item {
         }
     }
 
+    function clearResult() {
+        hashResultField.text = "";
+        hashResultField.isError = false;
+        sri = "";
+    }
+
     // React to hashResult pushed back from main
     onHashResultChanged: {
         const r = hashTab.hashResult;
         if (r === null)
             return;
-        hashSpinner.visible = false;
         hashResultField.isError = r.isError;
         hashResultField.text = r.value;
+        sri = r.sri || "";
     }
 }

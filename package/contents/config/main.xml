@@ -20,7 +20,7 @@
             <default>10</default>
         </entry>
         <entry name="defaultView" type="String">
-            <!-- "timeline" | "updates" | "secrets" -->
+            <!-- "timeline" | "updates" | "diff" | "tools" | "secrets" | "hash" | "history" | "storeusage" -->
             <default>timeline</default>
         </entry>
         <entry name="enableHostDetect" type="Bool">

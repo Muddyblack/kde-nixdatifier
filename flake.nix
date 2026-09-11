@@ -18,7 +18,7 @@
       packages = forAllSystems (system:
         let
           pkgs = pkgsFor system;
-          runtime = with pkgs; [ bash nix jq git curl coreutils util-linux findutils gnugrep gnused gawk bc inotify-tools libnotify wl-clipboard xclip polkit python3 ];
+          runtime = with pkgs; [ bash nix jq git coreutils util-linux findutils gnugrep gnused gawk inotify-tools libnotify polkit ];
           runtimePath = pkgs.lib.makeBinPath runtime;
           tray = pkgs.qt6.callPackage ./tray/package.nix { inherit version; };
         in
@@ -44,7 +44,7 @@
               runtime_dir="\''${XDG_RUNTIME_DIR:-/tmp}/nixdatifier-\$USER"
               mkdir -p "\$runtime_dir"
               chmod 700 "\$runtime_dir"
-              ${tray}/bin/nixdatifier-tray ${pkgs.quickshell}/bin/qs "$dest" "\$runtime_dir/status.json" "$dest/package/contents/ui/nixos-logo.svg" &
+              ${tray}/bin/nixdatifier-tray ${pkgs.quickshell}/bin/qs "$dest" "\$runtime_dir/status.json" "$dest/package/icon-emblem.svg" &
               tray_pid=\$!
               trap 'kill "\$tray_pid" 2>/dev/null || true' EXIT
               ${pkgs.quickshell}/bin/qs --no-duplicate --path "$dest" "\$@"
@@ -125,7 +125,7 @@
               name="$(basename "$here")"
               out="$here/$name-$ver.plasmoid"
               rm -f "$out"
-              (cd "$here/package" && ${pkgs.zip}/bin/zip -r "$out" . -x '*.swp' '*~')
+              (cd "$here/package" && ${pkgs.zip}/bin/zip -r "$out" . -x '*.swp' '*~' 'icon-emblem.png')
               echo "wrote $out"
             '');
           };

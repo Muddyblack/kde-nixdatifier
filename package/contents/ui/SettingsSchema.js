@@ -68,6 +68,14 @@ var fields = [
       {
         "value": "hash",
         "label": "Hash calculator"
+      },
+      {
+        "value": "history",
+        "label": "Rebuild history"
+      },
+      {
+        "value": "storeusage",
+        "label": "Store usage"
       }
     ]
   },

@@ -22,7 +22,6 @@ Item {
     property bool isLoadingDetails: false
     property bool isBusy: false
     property var detailsCache: ({})
-    property string diffFilter: ""
     property string diffMode: "booted"
     property bool showDeleteButton: false
     property bool diffFilterEnabled: true
@@ -44,7 +43,6 @@ Item {
     signal collapseGen
     signal requestAction(int genNum, string action)
     signal diffModeToggle(int genNum)
-    signal filterChanged(string text)
     signal copyToClipboard(string text)
     signal compareWithRequested(int genA, int genB)
 
@@ -52,20 +50,8 @@ Item {
         return Qt.resolvedUrl("assets/" + name + ".svg");
     }
 
-    function formatBytes(bytes) {
-        if (!bytes || bytes <= 0)
-            return "";
-        const units = ["B", "KB", "MB", "GB", "TB"];
-        let i = 0, v = bytes;
-        while (v >= 1024 && i < units.length - 1) {
-            v /= 1024;
-            i++;
-        }
-        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
-    }
-
     function fpx(n) {
-        return Math.max(9, n) * fs;
+        return UI.Theme.fontPx(n, fs);
     }
 
     function friendlyTimestamp(value, now) {
@@ -384,7 +370,7 @@ Item {
             Layout.fillWidth: true
             Text {
                 Layout.fillWidth: true
-                text: genDelegate.details.closureBytes ? qsTr("Closure size: %1").arg(genDelegate.formatBytes(genDelegate.details.closureBytes)) : ""
+                text: genDelegate.details.closureBytes ? qsTr("Closure size: %1").arg(UI.Theme.formatBytes(genDelegate.details.closureBytes)) : ""
                 color: UI.Theme.muted
                 font.pixelSize: genDelegate.fpx(8)
             }

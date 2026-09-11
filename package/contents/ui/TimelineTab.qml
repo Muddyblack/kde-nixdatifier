@@ -38,7 +38,6 @@ Item {
     required property int bootedGenNum
     required property int activeGenNum
     required property var detailsCache
-    required property string diffFilter
     required property string diffMode
     required property bool showDeleteButton
     required property bool diffFilterEnabled
@@ -50,14 +49,13 @@ Item {
     required property string activeViewMode
 
     function fpx(n) {
-        return Math.max(9, n) * fs;
+        return UI.Theme.fontPx(n, fs);
     }
 
     signal selectGen(int genNum)
     signal collapseGen
     signal requestAction(int genNum, string action)
     signal diffModeToggle(int genNum)
-    signal filterChanged(string text)
     signal copyToClipboard(string text)
     signal compareWithRequested(int genA, int genB)
     signal refreshRequested
@@ -295,7 +293,6 @@ Item {
                 isLoadingDetails: timelineTab.isLoadingDetails
                 isBusy: timelineTab.isBusy
                 detailsCache: timelineTab.detailsCache
-                diffFilter: timelineTab.diffFilter
                 diffMode: timelineTab.diffMode
                 showDeleteButton: timelineTab.showDeleteButton
                 diffFilterEnabled: timelineTab.diffFilterEnabled
@@ -311,7 +308,6 @@ Item {
                 onCollapseGen: () => timelineTab.collapseGen()
                 onRequestAction: (n, a) => timelineTab.requestAction(n, a)
                 onDiffModeToggle: n => timelineTab.diffModeToggle(n)
-                onFilterChanged: t => timelineTab.filterChanged(t)
                 onCopyToClipboard: t => timelineTab.copyToClipboard(t)
                 onCompareWithRequested: (a, b) => timelineTab.compareWithRequested(a, b)
             }
@@ -495,28 +491,15 @@ Item {
     }
 
     // Loading spinner
-    UI.Icon {
-        id: mainSpinner
+    UI.Flake {
         anchors.centerIn: parent
-        source: Qt.resolvedUrl("nixos-logo.svg")
-        isMask: timelineTab.iconStyle !== "colored"
-        color: {
-            if (timelineTab.iconStyle === "white")
-                return "#ffffff";
-            if (timelineTab.iconStyle === "black")
-                return "#000000";
-            return timelineTab.accentColor;
-        }
         visible: timelineTab.isLoadingGens && timelineTab.generations.length === 0
         width: 64
         height: 64
-        RotationAnimation on rotation {
-            running: mainSpinner.visible && timelineTab.uiActive && timelineTab.enableMotion
-            from: 0
-            to: 360
-            duration: 1400
-            loops: Animation.Infinite
-        }
+        working: visible && timelineTab.uiActive
+        motion: timelineTab.enableMotion
+        style: timelineTab.iconStyle
+        accent: timelineTab.accentColor
     }
 
     Rectangle {

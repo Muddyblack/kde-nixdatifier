@@ -68,7 +68,7 @@ ShellRoot {
             property string secretsPath: ""
             property string secretsSourcePath: ""
             property bool diffFilterEnabled: true
-            property color timelineColor: "#9b5de5"
+            property color timelineColor: "#71849b"
             property color accentColor: "#91bcff"
             property real fontScale: 1.0
             property bool showBg: true
@@ -211,8 +211,6 @@ ShellRoot {
                 compactShowBadge: cfg.compactShowBadge
                 iconStyle: cfg.iconStyle
                 onToggleExpanded: root.popupOpen = !root.popupOpen
-                ToolTip.visible: hover.hovered && !root.popupOpen
-                ToolTip.text: core.toolTipSubText
             }
         }
         HoverHandler {
@@ -230,6 +228,58 @@ ShellRoot {
             interval: 400
             onTriggered: if (!hover.hovered)
                 pillWindow.revealed = false
+        }
+        Timer {
+            id: tipDelay
+            interval: 500
+            running: hover.hovered && pillWindow.shown && !root.popupOpen
+        }
+    }
+    // Separate popup so the tooltip isn't clipped to the pill's tiny layer surface.
+    PopupWindow {
+        id: pillTip
+        visible: pillWindow.visible && hover.hovered && !tipDelay.running && pillWindow.shown && !root.popupOpen && !root.smokeTest
+        color: "transparent"
+        anchor.window: pillWindow
+        anchor.rect.x: 0
+        anchor.rect.y: root.topEdge ? 0 : -6
+        anchor.rect.width: pillWindow.width
+        anchor.rect.height: pillWindow.height + 6
+        anchor.edges: (root.topEdge ? Edges.Bottom : Edges.Top) | (root.leftEdge ? Edges.Left : root.rightEdge ? Edges.Right : 0)
+        anchor.gravity: (root.topEdge ? Edges.Bottom : Edges.Top) | (root.leftEdge ? Edges.Right : root.rightEdge ? Edges.Left : 0)
+        implicitWidth: tipBox.implicitWidth
+        implicitHeight: tipBox.implicitHeight
+        Rectangle {
+            id: tipBox
+            anchors.fill: parent
+            implicitWidth: tipText.width + 20
+            implicitHeight: tipText.implicitHeight + 14
+            radius: 8
+            color: cfg.bgColor
+            border.color: UI.Theme.line
+            Column {
+                id: tipText
+                x: 10
+                y: 7
+                width: Math.min(360, Math.max(tipMain.implicitWidth, tipSub.implicitWidth))
+                spacing: 2
+                Text {
+                    id: tipMain
+                    width: parent.width
+                    text: core.toolTipMainText
+                    color: core.textColor
+                    font.bold: true
+                    wrapMode: Text.Wrap
+                }
+                Text {
+                    id: tipSub
+                    width: parent.width
+                    visible: text !== ""
+                    text: core.toolTipSubText
+                    color: UI.Theme.muted
+                    wrapMode: Text.Wrap
+                }
+            }
         }
     }
     PanelWindow {

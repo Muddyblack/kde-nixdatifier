@@ -6,7 +6,7 @@ Icon {
     property bool motion: true
     property string style: "colored"
     property color accent: Theme.highlightColor
-    source: Qt.resolvedUrl("../nixos-logo.svg")
+    source: Qt.resolvedUrl("../../../icon-emblem.svg")
     isMask: style !== "colored"
     color: style === "white" ? "white" : style === "black" ? "black" : accent
     RotationAnimation on rotation {

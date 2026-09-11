@@ -3,8 +3,6 @@ import QtQuick.Layouts
 import QtQuick.Controls
 import "shared" as UI
 
-import "components"
-
 Item {
     id: root
 
@@ -66,7 +64,7 @@ Item {
     property bool initialized: false
     property int activeJobs: 0
     signal configureRequested
-    readonly property string busyLabel: isBusy ? (currentActionType || qsTr("Running command…")) : isCheckingFlake ? qsTr("Checking flake inputs…") : isDryRunning ? qsTr("Previewing package changes…") : isLoadingDetails || isLoadingPairDiff ? qsTr("Loading package changes…") : isProbingHash ? qsTr("Calculating hash…") : isLoadingSecrets ? qsTr("Inspecting secrets…") : _diskProbeRunning ? qsTr("Measuring Nix store…") : countingChanges ? qsTr("Counting package changes…") : activeJobs > 0 ? qsTr("Refreshing system information…") : ""
+    readonly property string busyLabel: isBusy ? (currentActionType || qsTr("Running command…")) : isCheckingFlake ? qsTr("Checking flake inputs…") : isDryRunning ? qsTr("Previewing package changes…") : isLoadingDetails || isLoadingPairDiff ? qsTr("Loading package changes…") : isProbingHash ? qsTr("Calculating hash…") : isProbingStoreUsage ? qsTr("Inspecting store path…") : isLoadingSecrets ? qsTr("Inspecting secrets…") : _diskProbeRunning ? qsTr("Measuring Nix store…") : countingChanges ? qsTr("Counting package changes…") : activeJobs > 0 ? qsTr("Refreshing system information…") : ""
 
     // ── Script directory ──────────────────────────────────────────────────────
     readonly property string scriptDir: Qt.resolvedUrl("../tools/sh/").toString().replace("file://", "")
@@ -125,14 +123,14 @@ Item {
     property bool isLoadingDetails: false
     property bool isBusy: false
     property bool isProbingHash: false
+    property bool isProbingStoreUsage: false
     property bool isLoadingSecrets: false
     property bool isLoadingConfigDiff: false
 
     // ── Active spinner state (panel spinner spins if any action or probe is running) ──
-    readonly property bool isSpinning: root.activeJobs > 0 || root._diskProbeRunning || root.isBusy || root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isLoadingSecrets || root.isLoadingConfigDiff
+    readonly property bool isSpinning: root.activeJobs > 0 || root._diskProbeRunning || root.isBusy || root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isProbingStoreUsage || root.isLoadingSecrets || root.isLoadingConfigDiff
 
     property var detailsCache: ({})
-    property string diffFilter: ""
     property string diffMode: "prev"
 
     // Cache of pairwise diffs for the Diff tab: key "A_B" -> { diff: [...] }
@@ -184,6 +182,7 @@ Item {
     property string nixosVersion: ""
     property string lastActivationTime: ""
     property string uptime: ""
+    property string userFacePath: ""
 
     // ── Disk usage state ──────────────────────────────────────────────────────
     // All values in bytes (0 = unknown).
@@ -194,7 +193,7 @@ Item {
     // ── Secrets state ─────────────────────────────────────────────────────────
     // deployedSecrets: live decrypted secrets (e.g. /run/secrets, auto-detected)
     // sourceSecrets:   encrypted source file (e.g. secrets.yaml in the flake repo)
-    property var deployedSecrets: ({
+    readonly property var emptySecrets: ({
             path: "",
             exists: false,
             lastModified: "",
@@ -206,24 +205,20 @@ Item {
             recipientCount: 0,
             encType: ""
         })
-    property var sourceSecrets: ({
-            path: "",
-            exists: false,
-            lastModified: "",
-            freshness: "",
-            fileCount: 0,
-            names: [],
-            encKind: "",
-            sopsVersion: "",
-            recipientCount: 0,
-            encType: ""
-        })
-
-    // Legacy alias so any remaining sopsStatus references still compile
-    property var sopsStatus: deployedSecrets
+    property var deployedSecrets: emptySecrets
+    property var sourceSecrets: emptySecrets
 
     // ── Hash tool state ───────────────────────────────────────────────────────
     property var hashResult: null   // { value: string, isError: bool } | null
+
+    // ── Store usage tool state ───────────────────────────────────────────────
+    // { path, exists, roots: [], referrers: [], closureBytes } | { isError: true, value: string } | null
+    property var storeUsageResult: null
+
+    // ── Rebuild history state ────────────────────────────────────────────────
+    // Newest first, as returned by the "history list" script.
+    property var actionHistory: []
+    property bool isLoadingHistory: false
 
     // ── Pending confirmation ──────────────────────────────────────────────────
     property int pendingGenNum: -1
@@ -300,19 +295,6 @@ Item {
         sh("notify-send -i " + icon + " " + shq(title) + " " + shq(body), null);
     }
 
-    // Human-readable byte formatter — used for closure size + disk usage chips.
-    function formatBytes(bytes) {
-        if (!bytes || bytes <= 0)
-            return "";
-        const units = ["B", "KB", "MB", "GB", "TB"];
-        let i = 0, v = bytes;
-        while (v >= 1024 && i < units.length - 1) {
-            v /= 1024;
-            i++;
-        }
-        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
-    }
-
     // ── Shell helper ──────────────────────────────────────────────────────────
     // Creates a fresh Shell.qml instance, runs cmd, calls cb(cmd,out,err,code), auto-cleans up.
     //
@@ -360,6 +342,18 @@ Item {
         return "'" + String(value == null ? "" : value).replace(/'/g, "'\\''") + "'";
     }
 
+    // Prefixes a system command with pkexec when the user enabled it.
+    // Callers pass fixed command text plus validated integers only.
+    function privileged(command) {
+        return (root.settings.usePkexec ? "pkexec " : "") + command;
+    }
+
+    // Runs a script with the Nix tools on PATH, folding stderr into stdout so
+    // failures reach the toast and the history entry.
+    function systemShell(script) {
+        return "sh -c \"export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; " + script + " 2>&1\"";
+    }
+
     // ── Operations ────────────────────────────────────────────────────────────
 
     function refreshGenerations() {
@@ -368,6 +362,8 @@ Item {
         root.isLoadingGens = true;
         sh(shq(root.scriptDir + "generations"), function (cmd, out, err, code) {
             root.isLoadingGens = false;
+            // Activation time and version follow the generation list.
+            root.probeSysInfo();
             const text = (out || "").trim();
             if (!text) {
                 root.pushToast(qsTr("No generations found — is /nix/var/nix/profiles/ accessible?"), true);
@@ -402,7 +398,7 @@ Item {
         const now = Date.now();
         root._diskProbeRunning = true;
         root._lastDiskProbeMs = now;
-        sh(shq(root.scriptDir + "run") + " cached disk " + (force ? "0" : "1800") + " -- " + shq(root.scriptDir + "diskusage"), function (cmd, out, err, code) {
+        sh(shq(root.scriptDir + "run") + " cached disk " + (force ? 0 : Math.round(root.diskProbeTtlMs / 1000)) + " -- " + shq(root.scriptDir + "diskusage"), function (cmd, out, err, code) {
             root._diskProbeRunning = false;
             root._lastDiskProbeMs = Date.now();
             const p = (out || "").split("\x1e");
@@ -445,11 +441,88 @@ Item {
         root.isProbingHash = true;
         sh(shq(root.scriptDir + "hash") + " " + shq(mode) + " " + shq(input), function (cmd, out, err, code) {
             root.isProbingHash = false;
-            const raw = (out || "").trim();
-            const isError = code !== 0 || raw.startsWith("ERROR:");
+            // Line 1 is the hash as the tool reports it, line 2 its SRI form.
+            const lines = (out || "").trim().split("\n");
+            const isError = code !== 0 || lines[0].startsWith("ERROR:");
+            const sri = (lines[1] || "").trim();
             root.hashResult = {
-                value: raw || err || qsTr("No hash result returned"),
+                value: lines[0] || err || qsTr("No hash result returned"),
+                sri: !isError && sri.startsWith("sha256-") ? sri : "",
                 isError: isError
+            };
+        });
+    }
+
+    // ── Rebuild history ───────────────────────────────────────────────────────
+    function loadHistory() {
+        if (root.isLoadingHistory)
+            return;
+        root.isLoadingHistory = true;
+        sh(shq(root.scriptDir + "history") + " list", function (cmd, out, err, code) {
+            root.isLoadingHistory = false;
+            let parsed = [];
+            try {
+                parsed = JSON.parse(out || "[]");
+            } catch (e) {}
+            root.actionHistory = Array.isArray(parsed) ? parsed : [];
+        });
+    }
+
+    // Persists one run's outcome so it survives after its toast is dismissed.
+    // action: a stable machine-readable kind (e.g. "switch", "gc", "hm-switch"),
+    // NOT the already-localized currentActionType label.
+    function recordHistoryEntry(action, label, genNum, exitCode, output) {
+        // The kernel caps one shell argument at 128 KiB, and a GC or rebuild
+        // log can exceed that — the entry would then be lost entirely. The
+        // tail carries the result and any error, so keep that part.
+        const limit = 16000;
+        const text = String(output || "");
+        const kept = text.length > limit ? "…\n" + text.slice(-limit) : text;
+        sh(shq(root.scriptDir + "history") + " record " + shq(action) + " " + shq(label) + " " + parseInt(genNum, 10) + " " + parseInt(exitCode, 10) + " " + shq(kept), function () {
+            root.loadHistory();
+        });
+    }
+
+    function clearHistory() {
+        sh(shq(root.scriptDir + "history") + " clear", function () {
+            root.actionHistory = [];
+        });
+    }
+
+    // ── Store usage tool ──────────────────────────────────────────────────────
+    function probeStoreUsage(path) {
+        root.storeUsageResult = null;
+        const clean = String(path || "").trim();
+        // Client-side check mirrors the shell script's own validation — this is
+        // just to fail fast with a friendly message before spawning a process.
+        if (!/^\/nix\/store\/[0-9a-z]{32}-/.test(clean)) {
+            root.storeUsageResult = {
+                isError: true,
+                value: qsTr("Not a /nix/store/... path")
+            };
+            return;
+        }
+        if (root.isProbingStoreUsage)
+            return;
+        root.isProbingStoreUsage = true;
+        sh(shq(root.scriptDir + "run") + " cached " + shq("storeusage:" + clean) + " 300 -- " + shq(root.scriptDir + "store-usage") + " " + shq(clean), function (cmd, out, err, code) {
+            root.isProbingStoreUsage = false;
+            if (code !== 0) {
+                root.storeUsageResult = {
+                    isError: true,
+                    value: (err || out || qsTr("Could not inspect store path")).trim()
+                };
+                return;
+            }
+            const p = (out || "").split("\x1e");
+            const exists = (p[3] || "").trim() === "1";
+            root.storeUsageResult = {
+                isError: false,
+                path: clean,
+                exists: exists,
+                roots: (p[0] || "").split("\n").map(s => s.trim()).filter(s => s),
+                referrers: (p[1] || "").split("\n").map(s => s.trim()).filter(s => s),
+                closureBytes: parseInt((p[2] || "").trim(), 10) || 0
             };
         });
     }
@@ -631,32 +704,36 @@ Item {
         });
     }
 
-    function parsePairDiff(genA, genB, text) {
-        const lines = (text.split("\x1e")[2] || "").split("\n");
-        const diffList = [];
-        for (let i = 0; i < lines.length; i++) {
-            const line = stripAnsi(lines[i]).trim();
-            if (!line)
+    // Parses `nix store diff-closures` output into package entries.
+    // profileFor(type) names the closure that holds the package's store path.
+    function parseDiffLines(raw, profileFor) {
+        const list = [];
+        for (const rawLine of raw.split("\n")) {
+            const m = stripAnsi(rawLine).trim().match(/^([^:]+):\s+(.+?)\s+(?:→|->)\s+(.+?)(?:,\s+([+-]?\d[\d.,]*\s*[KMGT]?i?B))?$/);
+            if (!m)
                 continue;
-            const m = line.match(/^([^:]+):\s+(.+?)\s+(?:→|->)\s+(.+?)(?:,\s+([+-]?\d[\d.,]*\s*[KMGT]?i?B))?$/);
-            if (m) {
-                const oldV = m[2];
-                const newV = m[3];
-                let type = "upgrade";
-                if (oldV === "∅" || oldV === "null")
-                    type = "added";
-                else if (newV === "∅" || newV === "null")
-                    type = "removed";
-                diffList.push({
-                    name: m[1].trim(),
-                    oldVersion: oldV,
-                    newVersion: newV,
-                    size: (m[4] || "").trim(),
-                    type,
-                    storeProfile: "/nix/var/nix/profiles/system-" + (type === "removed" ? genB : genA) + "-link"
-                });
-            }
+            const oldV = m[2], newV = m[3];
+            const type = oldV === "∅" || oldV === "null" ? "added" : newV === "∅" || newV === "null" ? "removed" : "upgrade";
+            list.push({
+                name: m[1].trim(),
+                oldVersion: oldV,
+                newVersion: newV,
+                size: (m[4] || "").trim(),
+                type,
+                storeProfile: profileFor(type)
+            });
         }
+        return list;
+    }
+
+    // "linux-6.9.1" → "6.9.1"; falls back to the store path's name segment.
+    function kernelVersion(kernelPath) {
+        const m = kernelPath.match(/linux-([^/]+)/);
+        return m ? m[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
+    }
+
+    function parsePairDiff(genA, genB, text) {
+        const diffList = parseDiffLines(text.split("\x1e")[2] || "", type => "/nix/var/nix/profiles/system-" + (type === "removed" ? genB : genA) + "-link");
         const cache = Object.assign({}, root.pairDiffCache);
         cache[genA + "_" + genB] = {
             diff: diffList
@@ -891,6 +968,7 @@ Item {
         sh(cmd, function (c, out, err, code) {
             root.isBusy = false;
             root.updatingInput = "";
+            root.recordHistoryEntry("flake-update", root.currentActionType, -1, code, (err || out || "").trim());
             if (code !== 0) {
                 root.pushToast(qsTr("Update failed: ") + (err || out || "").trim(), true);
                 return;
@@ -983,6 +1061,7 @@ Item {
         sh(shq(root.scriptDir + "terminal") + " " + shq(root.terminalApp) + " " + shq(root.flakePath) + " " + shq(cmd), function (c, out, err, code) {
             root.isBusy = false;
             const message = code === 0 ? qsTr("%1 finished.").arg(label) : qsTr("%1 exited with status %2. %3").arg(label).arg(code).arg((err || "").trim());
+            root.recordHistoryEntry("custom", label, -1, code, qsTr("(output not captured — command ran in a terminal window)"));
             root.pushToast(message, code !== 0);
             root.notify("Nixdatifier", message, code !== 0);
             root.refreshGenerations();
@@ -1044,21 +1123,12 @@ Item {
         root.currentActionType = action === "switch" ? qsTr("Activating generation…") : action === "rollback" ? qsTr("Setting next boot…") : qsTr("Deleting generation…");
         root.currentActionGenNum = genNum;
 
-        const prefix = root.settings.usePkexec ? "pkexec " : "";
-        const pathExport = "export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; ";
-        const profileSwitch = prefix + "nix-env --profile /nix/var/nix/profiles/system --switch-generation " + genNum;
-
-        let cmd;
-        if (action === "switch") {
-            cmd = "sh -c \"" + pathExport + profileSwitch + " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration switch 2>&1\"";
-        } else if (action === "rollback") {
-            cmd = "sh -c \"" + pathExport + profileSwitch + " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration boot 2>&1\"";
-        } else {
-            cmd = "sh -c \"" + pathExport + prefix + "nix-env --profile /nix/var/nix/profiles/system --delete-generations " + genNum + " 2>&1\"";
-        }
+        const profileSwitch = privileged("nix-env --profile /nix/var/nix/profiles/system --switch-generation " + genNum);
+        const cmd = systemShell(action === "delete" ? privileged("nix-env --profile /nix/var/nix/profiles/system --delete-generations " + genNum) : profileSwitch + " && " + privileged("/nix/var/nix/profiles/system/bin/switch-to-configuration " + (action === "switch" ? "switch" : "boot")));
 
         sh(cmd, function (c, out, err, code) {
             root.isBusy = false;
+            root.recordHistoryEntry(action, root.currentActionType, genNum, code, (err || out || "").trim());
             if (code !== 0) {
                 const msg = (err || out || "").trim();
                 const labels = {
@@ -1099,22 +1169,19 @@ Item {
             root.pushToast(qsTr("Already running another action — please wait."), true);
             return;
         }
-        root.currentActionType = qsTr("Cleaning Nix store…");
-        if (mode !== "gc" && mode !== "gc-14d" && mode !== "gc-all")
+        const gcArgs = {
+            gc: "",
+            "gc-14d": " --delete-older-than 14d",
+            "gc-all": " -d"
+        }[mode];
+        if (gcArgs === undefined)
             return;
         root.isBusy = true;
-        const prefix = root.settings.usePkexec ? "pkexec " : "";
-        const pathExport = "export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; ";
-        let gcArgs;
-        if (mode === "gc")
-            gcArgs = "";
-        else if (mode === "gc-14d")
-            gcArgs = " --delete-older-than 14d";
-        else
-            gcArgs = " -d";
-        const cmd = "sh -c \"" + pathExport + prefix + "nix-collect-garbage" + gcArgs + " 2>&1\"";
+        root.currentActionType = qsTr("Cleaning Nix store…");
+        const cmd = systemShell(privileged("nix-collect-garbage" + gcArgs));
         sh(cmd, function (c, out, err, code) {
             root.isBusy = false;
+            root.recordHistoryEntry(mode, root.currentActionType, -1, code, (err || out || "").trim());
             if (code !== 0) {
                 root.pushToast(qsTr("GC failed: ") + (err || out || "").trim(), true);
                 return;
@@ -1197,7 +1264,6 @@ Item {
 
         root.loadGenSummaries();
         root.snapshotActiveConfig();
-        root.probeSysInfo();
     }
 
     // Eagerly populate nixos-version + kernel for all gens (no nix commands — instant).
@@ -1215,12 +1281,9 @@ Item {
                 if (cache[genNum] !== undefined && !cache[genNum].partial)
                     continue;
                 const nixosVer = (parts[1] || "").trim();
-                const kernelPath = (parts[2] || "").trim();
-                const kMatch = kernelPath.match(/linux-([^/]+)/);
-                const kernelVer = kMatch ? kMatch[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
                 cache[genNum] = {
                     nixosVer,
-                    kernelVer,
+                    kernelVer: root.kernelVersion((parts[2] || "").trim()),
                     commitDate: "",
                     diff: [],
                     closureBytes: 0,
@@ -1251,38 +1314,10 @@ Item {
         // \x1e separates: [0]=nixos-version  [1]=kernel-path  [2]=diff lines
         const parts = text.split("\x1e");
         const nixosVer = stripAnsi((parts[0] || "").trim());
-        const kernelPath = stripAnsi((parts[1] || "").trim());
-        const kMatch = kernelPath.match(/linux-([^/]+)/);
-        const kernelVer = kMatch ? kMatch[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
-        const diffRaw = parts[2] || "";
+        const kernelVer = kernelVersion(stripAnsi((parts[1] || "").trim()));
         const sizeRaw = (parts[3] || "").trim();
         const closureBytes = /^\d+$/.test(sizeRaw) ? parseInt(sizeRaw, 10) : 0;
-
-        const diffList = [];
-        const lines = diffRaw.split("\n");
-        for (let i = 0; i < lines.length; i++) {
-            const line = stripAnsi(lines[i]).trim();
-            if (!line)
-                continue;
-            const m = line.match(/^([^:]+):\s+(.+?)\s+(?:→|->)\s+(.+?)(?:,\s+([+-]?\d[\d.,]*\s*[KMGT]?i?B))?$/);
-            if (m) {
-                const oldV = m[2];
-                const newV = m[3];
-                let type = "upgrade";
-                if (oldV === "∅" || oldV === "null")
-                    type = "added";
-                else if (newV === "∅" || newV === "null")
-                    type = "removed";
-                diffList.push({
-                    name: m[1].trim(),
-                    oldVersion: oldV,
-                    newVersion: newV,
-                    size: (m[4] || "").trim(),
-                    type,
-                    storeProfile: type === "removed" ? (basePath || "/run/booted-system") : "/nix/var/nix/profiles/system-" + genNum + "-link"
-                });
-            }
-        }
+        const diffList = parseDiffLines(parts[2] || "", type => type === "removed" ? (basePath || "/run/booted-system") : "/nix/var/nix/profiles/system-" + genNum + "-link");
 
         // Extract commit date from nixos version e.g. "25.11.20260518.abc1234"
         let commitDate = "";
@@ -1310,6 +1345,7 @@ Item {
         root.nixosVersion = p[1] ? p[1].trim() : "";
         root.uptime = p[2] ? p[2].trim() : "";
         root.lastActivationTime = p[3] ? p[3].trim() : "";
+        root.userFacePath = p[4] ? p[4].trim() : "";
     }
 
     function parseSopsInfo(text) {
@@ -1319,18 +1355,7 @@ Item {
     }
 
     function parseSecretsBlock(raw, kind) {
-        const empty = {
-            path: "",
-            exists: false,
-            lastModified: "",
-            freshness: "",
-            fileCount: 0,
-            names: [],
-            encKind: "",
-            sopsVersion: "",
-            recipientCount: 0,
-            encType: ""
-        };
+        const empty = root.emptySecrets;
         // Preserve a leading empty line (path=empty) by only trimming, not filtering.
         const rawLines = raw.split("\n").map(l => l.trim());
         // Drop leading blank lines AND trailing blank lines, keep blanks in between.
@@ -1386,8 +1411,8 @@ Item {
     // ── Init & timers ─────────────────────────────────────────────────────────
     function start() {
         refreshGenerations();
-        probeSysInfo();
         probeSecrets();
+        loadHistory();
         // Deliberately no probeDiskUsage() here — it is deferred to the first
         // time the popup is opened, so a widget that is never clicked never
         // walks /nix/store.
@@ -1436,10 +1461,8 @@ Item {
                 if (changed && root.settings.showFlakeSection)
                     root.checkFlakeUpdates();
             });
-            if (root.settings.autoRefreshOnOpen) {
+            if (root.settings.autoRefreshOnOpen)
                 refreshGenerations();
-                probeSysInfo();
-            }
             // The very first open always populates the disk chips; after that
             // it follows the auto-refresh preference. Either way it is
             // TTL-guarded, so reopening the popup does not re-walk the store.

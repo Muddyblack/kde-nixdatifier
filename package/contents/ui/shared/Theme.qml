@@ -45,4 +45,20 @@ QtObject {
     function wash(c, alpha) {
         return Qt.rgba(c.r, c.g, c.b, alpha);
     }
+    // Scaled pixel size with a 9px floor so small labels stay legible.
+    function fontPx(size, scale) {
+        return Math.round(Math.max(9, size) * scale);
+    }
+    // Human-readable byte count; "" for unknown or zero.
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0)
+            return "";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0, v = bytes;
+        while (v >= 1024 && i < units.length - 1) {
+            v /= 1024;
+            i++;
+        }
+        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
+    }
 }

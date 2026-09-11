@@ -21,7 +21,7 @@ export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:
 command -v jq  >/dev/null 2>&1 || { echo "ERROR: jq not on PATH"  >&2; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "ERROR: git not on PATH" >&2; exit 1; }
 
-TIMEOUT="${FLAKE_PROBE_TIMEOUT:-25}"
+TIMEOUT="${FLAKE_PROBE_TIMEOUT:-40}"
 MAX_PARALLEL="${FLAKE_PROBE_PARALLEL:-8}"
 
 # Pull root inputs as TSV: name type owner repo url ref rev lastModified

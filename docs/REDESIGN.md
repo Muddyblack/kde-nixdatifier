@@ -10,7 +10,8 @@ HTML preview or its sample data.
 ## Appearance and interaction
 
 Monochrome UI SVGs have a white default while retaining runtime tint support.
-The original `nixos-logo.svg` keeps its colors and rotates during tracked work.
+The flake emblem (`package/icon-emblem.svg`, drawn by `shared/Flake.qml`) keeps
+its colors and rotates during tracked work; loading spinners and the tray reuse it.
 The header shows the booted generation in green and, when different, an arrow to
 its amber next-boot generation. The Updates tab owns the update count. Custom
 commands open in a full Commands panel from the footer; the old
@@ -119,8 +120,9 @@ Use `path:.` while reviewing untracked files; Git-backed flake evaluation exclud
 untracked files. No staging is needed for the path form.
 
 Quickshell IPC accepts `qs ipc -p <configuration-root> call panel <action>`, with
-`toggle`, `show`, `hide`, `refresh`, `configure`, `summary`, and `quit`. Use the same
-configuration root used by the running host. Pin keeps the popup open; Escape
+`toggle`, `hide`, `refresh`, `configure`, `summary`, and `quit`. `show` is defined
+too, but `qs ipc … call panel show` collides with Quickshell's own `qs ipc show`
+subcommand, so use `toggle`. Use the same configuration root used by the running host. Pin keeps the popup open; Escape
 closes settings first, then the popup. Existing Plasma keyboard-shortcut and About
 pages are managed by Plasma itself.
 
@@ -132,7 +134,9 @@ previews, real completion/error state, protected actions, actual preview-button
 clicks, navigation, light-desktop contrast, footer geometry during work/notices,
 and full-distance timeline motion after expansion and scrolling. Python tests
 cover shared cache coalescing across install paths, failed reads, mutation locking,
-quoted working directories, terminal exit codes, and preview lock-file safety.
+quoted working directories, terminal exit codes, preview lock-file safety, and
+that every settings declaration (`main.xml`, `Settings.qml`, the Hyprland adapter,
+`SettingsSchema.js`, `configGeneral.qml`) agrees on keys and defaults.
 `tests/Smoke.qml` renders the shared application and exercises all settings tabs.
 
 During this implementation the QML suite and eight helper tests passed, the shared

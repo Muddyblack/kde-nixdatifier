@@ -29,7 +29,7 @@ pack: ## build .plasmoid archive
 	  name=$$(basename "$$PWD"); \
 	  out="$$PWD/$$name-$$ver.plasmoid"; \
 	  rm -f "$$out"; \
-	  (cd package && zip -r "$$out" . -x '*.swp' '*~'); \
+	  (cd package && zip -r "$$out" . -x '*.swp' '*~' 'icon-emblem.png'); \
 	  echo "wrote $$out"; \
 	fi
 

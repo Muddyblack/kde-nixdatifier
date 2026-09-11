@@ -158,11 +158,6 @@ Pane {
                                             onEditingFinished: if (text !== cmdRow.modelData.label)
                                                 editor.changeCommand(cmdRow.index, "label", text)
                                         }
-                                        ComboBox {
-                                            model: ["accent", "green", "red", "default"]
-                                            currentIndex: Math.max(0, model.indexOf(cmdRow.modelData.color || "accent"))
-                                            onActivated: editor.changeCommand(cmdRow.index, "color", currentText)
-                                        }
                                         UI.ActionButton {
                                             text: "×"
                                             tip: qsTr("Remove command")

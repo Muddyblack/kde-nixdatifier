@@ -115,26 +115,8 @@ homepage_json=""
 if [ "${#unique[@]}" -gt 0 ] && command -v jq >/dev/null 2>&1; then
     names_file=$(mktemp -t meta-names.XXXXXX.json) || exit 0
     trap 'rm -f "$names_file"' EXIT
-    # Build a JSON array of names. python3 is in current-system; fall back to
-    # a hand-rolled writer if it's missing.
-    if command -v python3 >/dev/null 2>&1; then
-        printf '%s\n' "${unique[@]}" | python3 -c '
-import json, sys
-json.dump([l.rstrip("\n") for l in sys.stdin if l.strip()], sys.stdout)
-' > "$names_file"
-    else
-        # The names_re filter has already restricted us to [A-Za-z0-9._+-],
-        # so no JSON-escaping is needed for the elements themselves.
-        {
-            printf '['
-            first=1
-            for n in "${unique[@]}"; do
-                if [ "$first" -eq 1 ]; then first=0; else printf ','; fi
-                printf '"%s"' "$n"
-            done
-            printf ']'
-        } > "$names_file"
-    fi
+    # Build a JSON array of names (jq is already required for this step).
+    printf '%s\n' "${unique[@]}" | jq -Rnc '[inputs | select(length > 0)]' > "$names_file"
 
     # Look up homepage via top-level pkgs first; if missing, try kdePackages
     # and plasma5Packages (Plasma 6 split many KDE attrs under kdePackages).

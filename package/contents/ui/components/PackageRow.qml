@@ -30,7 +30,7 @@ Item {
     signal copyRequested(string text)
 
     function fpx(n) {
-        return Math.max(9, n) * fs;
+        return UI.Theme.fontPx(n, fs);
     }
     property bool alternate: false
     readonly property real rowHeight: 32 * fs

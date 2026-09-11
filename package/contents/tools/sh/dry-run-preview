@@ -19,20 +19,21 @@ FLAKE_DIR="${1:-}"
 INPUT_NAME="${2:-}"
 OVERRIDE_REF="${3:-}"
 preview_host="${4:-auto}"
+
+if [ -z "$FLAKE_DIR" ] || [ -z "$INPUT_NAME" ] || [ -z "$OVERRIDE_REF" ]; then
+    echo "ERROR: usage: dry-run-preview <flake-dir> <input-name> <override-ref> [hostname]"
+    exit 1
+fi
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+command -v nix >/dev/null 2>&1 || { echo "ERROR: nix not on PATH"; exit 1; }
+
 if [[ "$preview_host" == auto ]]; then
     preview_host=$(hostname -s 2>/dev/null || cat /proc/sys/kernel/hostname)
 elif [[ "$preview_host" == single ]]; then
     preview_host=$(nix eval --json --no-write-lock-file "$FLAKE_DIR#nixosConfigurations" --apply builtins.attrNames | jq -er 'if length == 1 then .[0] else error("Host detection disabled: flake must have one NixOS configuration") end') || exit 1
 fi
-
-[ -z "$FLAKE_DIR" ] || [ -z "$INPUT_NAME" ] || [ -z "$OVERRIDE_REF" ] && {
-    echo "ERROR: usage: dry-run-preview <flake-dir> <input-name> <override-ref> [hostname]"
-    exit 1
-}
-
-export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
-
-command -v nix >/dev/null 2>&1 || { echo "ERROR: nix not on PATH"; exit 1; }
 
 # ── Build a name→version map of the currently running system's packages ───────
 declare -A CURRENT_VER

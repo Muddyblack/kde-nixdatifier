@@ -38,20 +38,17 @@ FullView {
     bootedGenNum: engine.bootedGenNum
     selectedGenNum: engine.selectedGenNum
     detailsCache: engine.detailsCache
-    diffFilter: engine.diffFilter
     diffMode: engine.diffMode
     showDeleteButton: engine.settings.showDeleteButton
     diffFilterEnabled: engine.settings.diffFilterEnabled
     showFlakeSection: engine.settings.showFlakeSection
     showCommandButtons: engine.settings.showCommandButtons
     customCommands: engine.customCommands
-    actionType: engine.currentActionType
-    actionGenNum: engine.currentActionGenNum
     activeViewMode: engine.activeViewMode
-    sopsStatus: engine.sopsStatus
     deployedSecrets: engine.deployedSecrets
     sourceSecrets: engine.sourceSecrets
     hostname: engine.hostname
+    userFacePath: engine.userFacePath
     nixosVersion: engine.nixosVersion
     lastActivationTime: engine.lastActivationTime
     uptime: engine.uptime
@@ -60,11 +57,14 @@ FullView {
     diskFreeBytes: engine.diskFreeBytes
     hashResult: engine.hashResult
     isProbingHash: engine.isProbingHash
+    actionHistory: engine.actionHistory
+    isLoadingHistory: engine.isLoadingHistory
+    storeUsageResult: engine.storeUsageResult
+    isProbingStoreUsage: engine.isProbingStoreUsage
     pendingGenNum: engine.pendingGenNum
     pendingAction: engine.pendingAction
     pendingCleanup: engine.pendingCleanup
     gcCustomCommand: engine.settings.gcCustomCommand || ""
-    usePkexec: engine.settings.usePkexec
     pairDiffCache: engine.pairDiffCache
     isLoadingPairDiff: engine.isLoadingPairDiff
     configDiffCache: engine.configDiffCache
@@ -103,7 +103,6 @@ FullView {
         engine.detailsCache = cache;
         engine.loadGenDetails(genNum);
     }
-    onFilterChanged: t => engine.diffFilter = t
     onRunCommand: (cmd, label) => engine.runCustomCommand(cmd, label)
     onCopyToClipboard: t => engine.copyToClipboard(t)
     onDismissToast: function (idx) {
@@ -112,6 +111,8 @@ FullView {
         engine.toasts = arr;
     }
     onHashRequested: (mode, input) => engine.runHashProbe(mode, input)
+    onClearHistoryRequested: () => engine.clearHistory()
+    onStoreUsageRequested: path => engine.probeStoreUsage(path)
     onDryRunRequested: (inputName, overrideRef) => engine.runDryPreview(inputName, overrideRef)
     onUpdateInputRequested: inputName => engine.runFlakeUpdateInput(inputName)
     onPopOutRequested: engine.pinned = !engine.pinned

@@ -1,4 +1,5 @@
 .claude/
+readme/opendesktop
 
 # Build artifacts
 *.plasmoid

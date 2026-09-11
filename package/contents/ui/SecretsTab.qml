@@ -17,7 +17,7 @@ Item {
         return Qt.resolvedUrl("assets/" + name + ".svg");
     }
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * (UI.Theme.smallFont.pixelSize > 0 ? UI.Theme.smallFont.pixelSize : 11) * fs));
+        return UI.Theme.fontPx(n, fs);
     }
 
     anchors.fill: parent
