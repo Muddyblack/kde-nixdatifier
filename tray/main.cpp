@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
         QObject::connect(job, &QProcess::errorOccurred, job, &QObject::deleteLater);
         job->start(qs, {"ipc", "--path", config, "call", "panel", action});
     };
-    for (const auto &entry : {qMakePair(QString("Open Nixdatifier"), QString("show")),
+    for (const auto &entry : {qMakePair(QString("Open Nixdatifier"), QString("open")),
                              qMakePair(QString("Refresh"), QString("refresh")),
                              qMakePair(QString("Settings…"), QString("configure")),
                              qMakePair(QString("Quit"), QString("quit"))}) {

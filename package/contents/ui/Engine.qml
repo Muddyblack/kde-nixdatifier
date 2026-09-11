@@ -100,6 +100,14 @@ Item {
                 callback(changed);
         });
     }
+    // Re-reads the flake context, then re-checks inputs when enabled — always
+    // with `force`, otherwise only if the path or lock file changed.
+    function syncFlakeContext(force) {
+        refreshFlakeContext(function (changed) {
+            if ((changed || force) && root.settings.showFlakeSection)
+                root.checkFlakeUpdates();
+        });
+    }
     readonly property real fs: root.settings.fontScale || 1.0
     readonly property var customCommands: {
         try {
@@ -152,7 +160,6 @@ Item {
 
     // ── Action tracking (exposed to FullView for busy bar text) ───────────────
     property string currentActionType: ""
-    property int currentActionGenNum: -1
 
     // ── Flake state ───────────────────────────────────────────────────────────
     property var flakeUpdates: []
@@ -165,7 +172,8 @@ Item {
     // Written by whichever instance runs the probe first; others just read it.
     // Deliberately a shell expression, not a quoted path — evaluated inside sh() calls.
     readonly property string flakeCacheName: "flake-" + Qt.md5(root.flakePath) + "-" + (root.lockFingerprint || "none")
-    readonly property string flakeCacheExpr: '"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier/' + root.flakeCacheName + '"'
+    readonly property string cacheDirExpr: '"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier"'
+    readonly property string flakeCacheExpr: root.cacheDirExpr + "/" + root.flakeCacheName
 
     // Unix timestamp of the cache snapshot currently applied to this instance.
     // Used by the sync timer to detect when another instance wrote a newer result.
@@ -823,7 +831,7 @@ Item {
         const ts = Math.floor(Date.now() / 1000);
         root._lastFlakeCacheTs = ts;
         const content = ts + "\n" + rawOutput;
-        sh("mkdir -p \"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier\"; t=$(mktemp \"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier/.state.XXXXXXXX\") && printf %s " + shq(content) + " > \"$t\" && mv \"$t\" " + root.flakeCacheExpr, null);
+        sh("mkdir -p " + root.cacheDirExpr + "; t=$(mktemp " + root.cacheDirExpr + "/.state.XXXXXXXX) && printf %s " + shq(content) + " > \"$t\" && mv \"$t\" " + root.flakeCacheExpr, null);
     }
 
     // Read the shared cache file. Calls cb(tsSeconds, rawTsv) on success, cb(0, "") on miss.
@@ -1065,10 +1073,7 @@ Item {
             root.pushToast(message, code !== 0);
             root.notify("Nixdatifier", message, code !== 0);
             root.refreshGenerations();
-            root.refreshFlakeContext(function () {
-                if (root.settings.showFlakeSection)
-                    root.checkFlakeUpdates();
-            });
+            root.syncFlakeContext(true);
             root.probeDiskUsage(true);
         }, true);
     }
@@ -1121,7 +1126,6 @@ Item {
         }
         root.isBusy = true;
         root.currentActionType = action === "switch" ? qsTr("Activating generation…") : action === "rollback" ? qsTr("Setting next boot…") : qsTr("Deleting generation…");
-        root.currentActionGenNum = genNum;
 
         const profileSwitch = privileged("nix-env --profile /nix/var/nix/profiles/system --switch-generation " + genNum);
         const cmd = systemShell(action === "delete" ? privileged("nix-env --profile /nix/var/nix/profiles/system --delete-generations " + genNum) : profileSwitch + " && " + privileged("/nix/var/nix/profiles/system/bin/switch-to-configuration " + (action === "switch" ? "switch" : "boot")));
@@ -1457,10 +1461,7 @@ Item {
 
     onExpandedChanged: {
         if (root.initialized && root.settings && root.expanded && root.autoStart) {
-            root.refreshFlakeContext(function (changed) {
-                if (changed && root.settings.showFlakeSection)
-                    root.checkFlakeUpdates();
-            });
+            root.syncFlakeContext(false);
             if (root.settings.autoRefreshOnOpen)
                 refreshGenerations();
             // The very first open always populates the disk chips; after that
@@ -1475,19 +1476,13 @@ Item {
         interval: 30000
         repeat: true
         running: root.autoStart && root.expanded && root.flakePath !== ""
-        onTriggered: root.refreshFlakeContext(function (changed) {
-            if (changed && root.settings.showFlakeSection)
-                root.checkFlakeUpdates();
-        })
+        onTriggered: root.syncFlakeContext(false)
     }
     Connections {
         target: root.settings
         function onFlakePathChanged() {
             if (root.autoStart)
-                root.refreshFlakeContext(function () {
-                    if (root.settings.showFlakeSection)
-                        root.checkFlakeUpdates();
-                });
+                root.syncFlakeContext(true);
         }
         function onShowFlakeSectionChanged() {
             if (root.autoStart && root.settings.showFlakeSection) {
@@ -1539,7 +1534,7 @@ Item {
         root._watcherArmedAtMs = Date.now();
         // Watch the cache directory for writes to our specific filename.
         // Watching the directory means inotifywait works even before the file exists.
-        const cacheDir = '"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier"';
+        const cacheDir = root.cacheDirExpr;
         const cacheName = root.flakeCacheName;
         const probe = "command -v inotifywait >/dev/null 2>&1 || { echo unsupported; exit 0; }; mkdir -p " + cacheDir + "; inotifywait -t 300 -e close_write -e moved_to -q --include '(flake.lock|flake-.*)' " + cacheDir + " " + shq(root.flakePath) + " >/dev/null 2>&1; code=$?; if [ $code -eq 0 ]; then echo changed; elif [ $code -eq 2 ]; then echo timeout; else echo failed; fi";
         sh(probe, function (cmd, out, err, code) {

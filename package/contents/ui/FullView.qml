@@ -189,9 +189,6 @@ Pane {
     readonly property var activeTool: tools.find(t => t.key === activeViewMode) || null
     readonly property bool inTools: activeViewMode === "tools" || activeTool !== null
     readonly property bool toolsOverlayOpen: inTools && activeViewMode !== "tools"
-    function openCleanup() {
-        cleanupMenu.open();
-    }
 
     readonly property real contentMargin: width < 440 ? 16 : 21
     readonly property string releaseLabel: {

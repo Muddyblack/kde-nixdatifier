@@ -44,6 +44,8 @@
               runtime_dir="\''${XDG_RUNTIME_DIR:-/tmp}/nixdatifier-\$USER"
               mkdir -p "\$runtime_dir"
               chmod 700 "\$runtime_dir"
+              # A previous session may have died mid-operation; don't let the tray start from its state.
+              rm -f "\$runtime_dir/status.json"
               ${tray}/bin/nixdatifier-tray ${pkgs.quickshell}/bin/qs "$dest" "\$runtime_dir/status.json" "$dest/package/icon-emblem.svg" &
               tray_pid=\$!
               trap 'kill "\$tray_pid" 2>/dev/null || true' EXIT

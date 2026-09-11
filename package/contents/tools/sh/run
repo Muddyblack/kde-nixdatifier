@@ -42,6 +42,11 @@ case "$mode" in
         "$@" >"$temp"
         mv "$temp" "$result_file"
         cat "$result_file"
+        # Keys include lock fingerprints, closures, and diff contents, so old
+        # entries are never read again. On a miss, drop anything untouched for
+        # 30 days: results, their locks (reopened, and so re-dated, on every
+        # use), superseded flake caches, and temp files of interrupted writes.
+        find "$cache_root" -maxdepth 1 -type f \( -name 'probe-*' -o -name 'disk-*' -o -name 'flake-*' -o -name '.probe.*' -o -name '.state.*' \) -mtime +30 -delete 2>/dev/null || true
         ;;
     *) echo 'Unknown operation mode' >&2; exit 2 ;;
 esac

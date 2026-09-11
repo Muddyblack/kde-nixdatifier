@@ -128,9 +128,9 @@ Use `path:.` while reviewing untracked files; Git-backed flake evaluation exclud
 untracked files. No staging is needed for the path form.
 
 Quickshell IPC accepts `qs ipc -p <configuration-root> call panel <action>`, with
-`toggle`, `hide`, `refresh`, `configure`, `summary`, and `quit`. `show` is defined
-too, but `qs ipc … call panel show` collides with Quickshell's own `qs ipc show`
-subcommand, so use `toggle`. Use the same configuration root used by the running host. Pin keeps the popup open; Escape
+`toggle`, `open`, `hide`, `refresh`, `configure`, `summary`, and `quit`. (`open` is
+not called `show` because `qs ipc … call panel show` collides with Quickshell's own
+`qs ipc show` subcommand.) Use the same configuration root used by the running host. Pin keeps the popup open; Escape
 closes settings first, then the popup. Existing Plasma keyboard-shortcut and About
 pages are managed by Plasma itself.
 

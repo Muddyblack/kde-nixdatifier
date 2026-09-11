@@ -93,7 +93,7 @@ qs ipc -p . call panel toggle      # open / close the popup
 qs ipc -p . call panel quit        # stop it
 ```
 
-`hide`, `refresh`, `configure`, and `summary` work the same way. `call panel show` does not: `show` collides with Quickshell's built-in `qs ipc show` subcommand, so use `toggle`.
+`open`, `hide`, `refresh`, `configure`, and `summary` work the same way.
 
 The Quickshell panel also runs under Plasma, except that clicking outside the popup doesn't close it (that relies on Hyprland's focus grab).
 

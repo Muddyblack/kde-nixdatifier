@@ -344,7 +344,6 @@ Item {
                 }
                 Text {
                     id: storePath
-                    readonly property string ver: root.pkgType === "removed" ? root.pkgOldVersion : root.pkgNewVersion
                     text: root.pathResult ? root.pathResult.path || root.pathResult.message : root.pkg.storeProfile ? qsTr("Resolving store path…") : qsTr("Not built yet")
                     color: root.textColor
                     opacity: 0.8

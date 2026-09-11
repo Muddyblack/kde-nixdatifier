@@ -147,7 +147,8 @@ ShellRoot {
         function toggle(): void {
             root.popupOpen = !root.popupOpen;
         }
-        function show(): void {
+        // Named `open`: `qs ipc … call panel show` would collide with Quickshell's own `ipc show`.
+        function open(): void {
             root.popupOpen = true;
         }
         function hide(): void {
