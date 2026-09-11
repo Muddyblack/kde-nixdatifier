@@ -1,21 +1,35 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "shared" as UI
 import "components"
 
-Item {
+Pane {
     id: fullView
+    property var storePathCache: ({})
+    property var generationCounts: ({})
+    signal generationCountsRequested(int genNum)
+    signal storePathRequested(var pkg)
+    padding: 0
+    background: null
+    palette.window: fullView.showBg ? fullView.bgColor : UI.Theme.systemBackgroundColor
+    palette.windowText: textColor
+    palette.base: "#1c2533"
+    palette.alternateBase: "#242f40"
+    palette.text: textColor
+    palette.button: "#242f40"
+    palette.buttonText: textColor
+    palette.highlight: accentColor
+    palette.highlightedText: "#131923"
+    palette.placeholderText: "#9aaac0"
 
     function svg(name) {
         return Qt.resolvedUrl("assets/" + name + ".svg");
     }
 
-    // Theme-aware font sizing. Legacy hardcoded sizes were tuned against a 9px base,
-    // so divide by 9 to convert legacy values into multipliers of the system small font.
-    readonly property int baseFontPx: Kirigami.Theme.smallFont.pixelSize
+    // Keep the shared layout consistent while honoring the user's font scale.
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * baseFontPx * fs));
+        return Math.max(1, Math.round(Math.max(9, n) * fs));
     }
 
     // ── Required properties ───────────────────────────────────────────────────
@@ -80,15 +94,7 @@ Item {
     // Invoked from a timeline card's right-click "Compare with…" menu.
     // Switches to the Diff tab, pre-populates A and B, and triggers the diff fetch.
     function openCompareInDiffTab(genA, genB) {
-        // Sync the picker selectedIndex values so the dropdown labels update.
-        // The pickers drive genA/genB via onSelectedIndexChanged, so we must
-        // set selectedIndex rather than (only) writing genA/genB directly.
-        for (var i = 0; i < fullView.generations.length; i++) {
-            if (fullView.generations[i].number === genA)
-                diffTab.pickerA.selectedIndex = i;
-            if (fullView.generations[i].number === genB)
-                diffTab.pickerB.selectedIndex = i;
-        }
+        diffTab.selectPair(genA, genB);
         fullView.viewModeChanged("diff");
         fullView.compareRequested(genA, genB);
     }
@@ -138,1045 +144,369 @@ Item {
     signal popOutRequested
     signal configureRequested
 
-    property bool isPopOutOpen: false
+    property bool commandsOpen: false
+    function openCommands() {
+        commandsOpen = true;
+        commandsView.focusBack();
+    }
+    function closeCommands() {
+        commandsOpen = false;
+        commandsButton.forceActiveFocus(Qt.OtherFocusReason);
+    }
+    onUiActiveChanged: if (!uiActive)
+        commandsOpen = false
 
-    // ── Glass background ──────────────────────────────────────────────────────
-    // KConfigXT Color drops alpha on save, so opacity is a separate property.
-    // We bake it into the color via Qt.rgba so the rect's own `opacity` stays 1.0
-    // and can't accidentally affect children or compositing.
+    property bool isPopOutOpen: false
+    property string updatingInput: ""
+    property bool isSpinning: false
+    property string busyLabel: ""
+    property bool enableGlow: true
+    property bool enableMotion: true
+    property bool enableLiveSwitch: true
+    readonly property bool inTools: ["tools", "hash", "secrets"].indexOf(activeViewMode) >= 0
+    readonly property bool toolsOverlayOpen: activeViewMode === "hash" || activeViewMode === "secrets"
+    function openCleanup() {
+        cleanupMenu.open();
+    }
+
+    readonly property real contentMargin: width < 440 ? 16 : 21
+    readonly property string releaseLabel: {
+        const match = nixosVersion.match(/^\d{2}\.\d{2}/);
+        return nixosVersion ? "NixOS " + (match ? match[0] : nixosVersion) : "NixOS";
+    }
+    function shortActivation() {
+        const m = lastActivationTime.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+        return m ? Qt.formatDateTime(new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5])), "d MMM, hh:mm") : lastActivationTime;
+    }
+    clip: true
     Rectangle {
         anchors.fill: parent
         radius: fullView.bgRadius
-        visible: fullView.showBg
-        color: fullView.bgColor
+        color: fullView.showBg ? fullView.bgColor : "transparent"
+        border.color: UI.Theme.wash(fullView.accentColor, .18)
     }
-
     ColumnLayout {
+        objectName: "mainPage"
         anchors.fill: parent
-        anchors.margins: fullView.showBg ? 12 : 4
-        spacing: 8
-
-        // ── Header ────────────────────────────────────────────────────────────
+        visible: !fullView.commandsOpen && !fullView.toolsOverlayOpen
+        spacing: 0
         ColumnLayout {
+            id: header
             Layout.fillWidth: true
-            spacing: 6
-
-            // Row 1: logo + Title/Gen on the left, Disk pool size on the right
+            Layout.leftMargin: fullView.contentMargin
+            Layout.rightMargin: fullView.contentMargin
+            Layout.topMargin: 20
+            spacing: 0
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 10
-
-                // Nix Logo
-                Kirigami.Icon {
-                    source: Qt.resolvedUrl("nixos-logo.svg")
-                    implicitWidth: 26
-                    implicitHeight: 26
-                    Layout.alignment: Qt.AlignVCenter
-                    isMask: fullView.iconStyle !== "colored"
-                    color: {
-                        if (fullView.iconStyle === "white")
-                            return "#ffffff";
-                        if (fullView.iconStyle === "black")
-                            return "#000000";
-                        return fullView.accentColor;
-                    }
+                UI.Flake {
+                    implicitWidth: 31
+                    implicitHeight: 31
+                    working: fullView.isSpinning && fullView.uiActive
+                    motion: fullView.enableMotion
+                    style: fullView.iconStyle
+                    accent: fullView.accentColor
                 }
-
-                // Title + Generation/Date
                 ColumnLayout {
-                    spacing: 1
-                    Layout.alignment: Qt.AlignVCenter
-
+                    Layout.fillWidth: true
+                    spacing: 5
                     Text {
-                        text: i18n("Nixdatifier")
+                        objectName: "widgetTitle"
+                        text: "Nixdatifier"
                         color: fullView.textColor
-                        font.pixelSize: fullView.fpx(14)
-                        font.bold: true
-                        font.letterSpacing: 0.2
+                        font.pixelSize: 16 * fullView.fs
+                        font.weight: Font.DemiBold
+                        font.letterSpacing: -.4
                     }
-
                     RowLayout {
-                        spacing: 4
-                        Rectangle {
-                            visible: fullView.activeGenNum > 0
-                            radius: 9
-                            color: Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.14)
-                            border.color: Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.30)
-                            border.width: 1
-                            implicitWidth: pillText.implicitWidth + 10
-                            implicitHeight: 15
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Row {
+                            objectName: "headerGenerations"
+                            spacing: 6
+                            readonly property bool hasNext: fullView.activeGenNum > 0 && fullView.activeGenNum !== fullView.bootedGenNum
+                            readonly property string description: fullView.bootedGenNum > 0 ? qsTr("Booted generation #%1").arg(fullView.bootedGenNum) + (hasNext ? qsTr(" · Next boot #%1").arg(fullView.activeGenNum) : "") : qsTr("Next boot #%1").arg(fullView.activeGenNum)
+                            visible: fullView.bootedGenNum > 0 || fullView.activeGenNum > 0
+                            Accessible.role: Accessible.StaticText
+                            Accessible.name: description
                             Text {
-                                id: pillText
-                                anchors.centerIn: parent
+                                objectName: "bootedGenerationLabel"
+                                visible: fullView.bootedGenNum > 0
+                                text: "#" + fullView.bootedGenNum
+                                color: UI.Theme.positive
+                                font.pixelSize: 10 * fullView.fs
+                                font.weight: Font.Medium
+                            }
+                            Text {
+                                visible: parent.hasNext && fullView.bootedGenNum > 0
+                                text: "→"
+                                color: "#71849b"
+                                font.pixelSize: 10 * fullView.fs
+                            }
+                            Text {
+                                objectName: "nextGenerationLabel"
+                                visible: parent.hasNext
                                 text: "#" + fullView.activeGenNum
-                                color: fullView.accentColor
-                                font.pixelSize: fullView.fpx(7.5)
-                                font.bold: true
-                                font.letterSpacing: 0.3
+                                color: UI.Theme.changed
+                                font.pixelSize: 10 * fullView.fs
+                                font.weight: Font.Medium
                             }
+                            HoverHandler {
+                                id: generationHover
+                            }
+                            ToolTip.visible: generationHover.hovered
+                            ToolTip.text: description
                         }
                         Text {
-                            visible: fullView.activeGenNum > 0 && fullView.nixosVersion !== ""
-                            text: {
-                                const ver = fullView.nixosVersion;
-                                const m = ver.match(/^(\d{2}\.\d{2}\.\d{4})/);
-                                return m ? m[1] : ver;
+                            Layout.fillWidth: true
+                            text: fullView.releaseLabel
+                            color: UI.Theme.muted
+                            font.pixelSize: 10 * fullView.fs
+                            elide: Text.ElideRight
+                            ToolTip.text: fullView.nixosVersion
+                            ToolTip.visible: versionHover.hovered
+                            HoverHandler {
+                                id: versionHover
                             }
-                            color: fullView.textColor
-                            opacity: 0.4
-                            font.pixelSize: fullView.fpx(8)
-                            font.family: Kirigami.Theme.fixedWidthFont.family
                         }
                     }
                 }
-
-                Item {
-                    Layout.fillWidth: true
-                }
-
-                // Storage Stat highlighted clean on the right
-                ColumnLayout {
-                    spacing: 1
-                    Layout.alignment: Qt.AlignVCenter
-                    visible: fullView.diskStoreBytes > 0
-
-                    Text {
-                        text: i18n("TOTAL POOL")
-                        color: fullView.textColor
-                        opacity: 0.4
-                        font.pixelSize: fullView.fpx(7)
-                        font.bold: true
-                        Layout.alignment: Qt.AlignRight
-                    }
-                    Text {
-                        text: fullView.formatBytes(fullView.diskStoreBytes)
-                        color: Qt.color("#f5c2e7") // Rosewater/Pink accent
-                        font.pixelSize: fullView.fpx(11.5)
-                        font.bold: true
-                        Layout.alignment: Qt.AlignRight
-                    }
-
-                    // A HoverHandler rather than a MouseArea: it is not an Item,
-                    // so the layout does not try to manage it, and it needs no
-                    // anchors to cover the whole column.
-                    HoverHandler {
-                        id: poolHover
-                    }
-                    ToolTip.text: i18n("/nix/store: %1\nReclaimable via GC: %2\n/nix free space: %3").arg(fullView.formatBytes(fullView.diskStoreBytes)).arg(fullView.formatBytes(fullView.diskReclaimableBytes)).arg(fullView.formatBytes(fullView.diskFreeBytes))
-                    ToolTip.visible: poolHover.hovered
-                    ToolTip.delay: 400
-                }
-            }
-
-            // Thin horizontal divider
-            Rectangle {
-                Layout.fillWidth: true
-                height: 1
-                color: Qt.rgba(1, 1, 1, 0.08)
-                Layout.topMargin: 2
-                Layout.bottomMargin: 2
-            }
-
-            // Row 2: Secondary Metadata + options/pin buttons
-            RowLayout {
-                Layout.fillWidth: true
-                spacing: 8
-
                 RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    // Hostname
-                    RowLayout {
-                        spacing: 4
-                        visible: fullView.hostname !== ""
-                        Text {
-                            text: "👤"
-                            font.pixelSize: fullView.fpx(8.5)
-                            opacity: 0.5
-                        }
-                        Text {
-                            text: fullView.hostname
-                            color: fullView.textColor
-                            opacity: 0.7
-                            font.pixelSize: fullView.fpx(8.5)
-                            font.bold: true
-                        }
+                    spacing: 0
+                    UI.ActionButton {
+                        glyph: "view-refresh"
+                        flatStyle: true
+                        tip: qsTr("Refresh system information")
+                        enabled: !fullView.isLoadingGens
+                        onClicked: fullView.refreshRequested()
                     }
-
-                    // Divider dot
-                    Rectangle {
-                        visible: fullView.hostname !== "" && fullView.uptime !== ""
-                        width: 3
-                        height: 3
-                        radius: 1.5
-                        color: fullView.textColor
-                        opacity: 0.25
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    // Uptime
-                    RowLayout {
-                        spacing: 4
-                        visible: fullView.uptime !== ""
-                        Text {
-                            text: "⏱️"
-                            font.pixelSize: fullView.fpx(8.5)
-                            opacity: 0.5
-                        }
-                        Text {
-                            text: i18n("up %1").arg(fullView.uptime)
-                            color: fullView.textColor
-                            opacity: 0.55
-                            font.pixelSize: fullView.fpx(8.5)
-                        }
-                    }
-
-                    // Divider dot
-                    Rectangle {
-                        visible: fullView.uptime !== "" && fullView.lastActivationTime !== ""
-                        width: 3
-                        height: 3
-                        radius: 1.5
-                        color: fullView.textColor
-                        opacity: 0.25
-                        Layout.alignment: Qt.AlignVCenter
-                    }
-
-                    // Switched/Activation
-                    RowLayout {
-                        spacing: 4
-                        visible: fullView.lastActivationTime !== ""
-                        Text {
-                            text: "📅"
-                            font.pixelSize: fullView.fpx(8.5)
-                            opacity: 0.5
-                        }
-                        Text {
-                            text: i18n("switched %1").arg(fullView.lastActivationTime)
-                            color: fullView.textColor
-                            opacity: 0.55
-                            font.pixelSize: fullView.fpx(8.5)
-                        }
-                    }
-
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                }
-
-                // Pin button
-                Rectangle {
-                    id: pinBtn
-                    Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 5
-                    color: fullView.isPopOutOpen ? Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.22) : (pinMa.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03))
-                    border.color: fullView.isPopOutOpen ? Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.55) : (pinMa.containsMouse ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(1, 1, 1, 0.08))
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 110
-                        }
-                    }
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 110
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "⬡"
-                        color: fullView.isPopOutOpen ? fullView.accentColor : Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.85)
-                        font.pixelSize: 14
-                    }
-                    MouseArea {
-                        id: pinMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
+                    UI.ActionButton {
+                        glyph: "window-pin"
+                        flatStyle: true
+                        tip: fullView.isPopOutOpen ? qsTr("Unpin popup") : qsTr("Keep popup open")
+                        primary: fullView.isPopOutOpen
                         onClicked: fullView.popOutRequested()
-                        ToolTip.text: fullView.isPopOutOpen ? i18n("Unpin (auto-close on focus loss)") : i18n("Pin open (keep visible)")
-                        ToolTip.visible: containsMouse
-                        ToolTip.delay: 500
                     }
-                }
-
-                // Cleanup button
-                Rectangle {
-                    id: cleanupBtn
-                    Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 5
-                    color: cleanupMa.containsMouse || cleanupMenu.opened ? Qt.rgba(1, 0.45, 0.45, 0.14) : Qt.rgba(1, 1, 1, 0.03)
-                    border.color: cleanupMa.containsMouse || cleanupMenu.opened ? Qt.rgba(1, 0.45, 0.45, 0.55) : Qt.rgba(1, 1, 1, 0.08)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 110
-                        }
+                    UI.ActionButton {
+                        glyph: "configure"
+                        flatStyle: true
+                        tip: qsTr("Configure widget…")
+                        onClicked: fullView.configureRequested()
                     }
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 110
-                        }
-                    }
-
-                    Kirigami.Icon {
-                        anchors.centerIn: parent
-                        source: "edit-clear-all"
-                        implicitWidth: 13
-                        implicitHeight: 13
-                        isMask: true
-                        color: cleanupMa.containsMouse || cleanupMenu.opened ? "#ff8080" : fullView.textColor
-                        opacity: cleanupMa.containsMouse || cleanupMenu.opened ? 0.90 : 0.50
-                        Behavior on opacity {
-                            NumberAnimation {
-                                duration: 110
-                            }
-                        }
-                    }
-
-                    MouseArea {
-                        id: cleanupMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: cleanupMenu.opened ? cleanupMenu.close() : cleanupMenu.open()
-                        ToolTip.text: i18n("Garbage collect / clean up store")
-                        ToolTip.visible: containsMouse && !cleanupMenu.opened
-                        ToolTip.delay: 500
-                    }
-
-                    Popup {
-                        id: cleanupMenu
-                        y: cleanupBtn.height + 6
-                        x: cleanupBtn.width - implicitWidth
-                        padding: 5
-                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-
-                        background: Rectangle {
-                            color: Qt.rgba(0.06, 0.06, 0.09, 0.97)
-                            radius: 8
-                            border.color: Qt.rgba(1, 1, 1, 0.10)
-                            border.width: 1
-                        }
-
-                        contentItem: Column {
-                            spacing: 1
-
-                            Text {
-                                leftPadding: 8
-                                rightPadding: 8
-                                topPadding: 2
-                                bottomPadding: 4
-                                text: i18n("Garbage collect")
-                                color: fullView.textColor
-                                opacity: 0.35
-                                font.pixelSize: fullView.fpx(7.5)
-                                font.bold: true
-                                font.letterSpacing: 0.5
-                            }
-
-                            Repeater {
-                                model: {
-                                    const base = [
-                                        {
-                                            label: i18n("GC only"),
-                                            sub: i18n("Free unreferenced store paths, keep all generations"),
-                                            mode: "gc",
-                                            color: "#80b4ff"
-                                        },
-                                        {
-                                            label: i18n("Remove old gens (14 days)"),
-                                            sub: i18n("Delete generations older than 14 days, then GC"),
-                                            mode: "gc-14d",
-                                            color: "#ffb347"
-                                        },
-                                        {
-                                            label: i18n("Remove all old gens"),
-                                            sub: i18n("Delete every non-current generation, then GC"),
-                                            mode: "gc-all",
-                                            color: "#ff8080"
-                                        }
-                                    ];
-                                    if (fullView.gcCustomCommand.trim())
-                                        base.push({
-                                            label: fullView.gcCustomCommand.trim(),
-                                            sub: i18n("Custom command (runs in terminal)"),
-                                            mode: "gc-custom",
-                                            color: "#b8a0ff"
-                                        });
-                                    return base;
-                                }
-
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    width: gcItemCol.implicitWidth + 24
-                                    height: 46
-                                    radius: 5
-                                    color: gcMa.containsMouse ? Qt.rgba(0.15, 0.15, 0.20, 0.80) : "transparent"
-                                    Behavior on color {
-                                        ColorAnimation {
-                                            duration: 80
-                                        }
-                                    }
-
-                                    Column {
-                                        id: gcItemCol
-                                        anchors {
-                                            left: parent.left
-                                            right: parent.right
-                                            verticalCenter: parent.verticalCenter
-                                        }
-                                        anchors.leftMargin: 10
-                                        anchors.rightMargin: 10
-                                        spacing: 2
-
-                                        Text {
-                                            text: modelData.label
-                                            color: modelData.color
-                                            font.pixelSize: fullView.fpx(9)
-                                            font.bold: true
-                                        }
-                                        Text {
-                                            text: modelData.sub
-                                            color: fullView.textColor
-                                            opacity: 0.45
-                                            font.pixelSize: fullView.fpx(7.5)
-                                        }
-                                    }
-
-                                    MouseArea {
-                                        id: gcMa
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: {
-                                            cleanupMenu.close();
-                                            fullView.cleanupVariantPicked(modelData.mode);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Overflow menu button (more options)
-                Rectangle {
-                    id: overflowBtn
-                    Layout.alignment: Qt.AlignVCenter
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    radius: 5
-                    color: overflowMa.containsMouse || overflowMenu.opened ? Qt.rgba(1, 1, 1, 0.08) : Qt.rgba(1, 1, 1, 0.03)
-                    border.color: overflowMa.containsMouse || overflowMenu.opened ? Qt.rgba(1, 1, 1, 0.18) : Qt.rgba(1, 1, 1, 0.08)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 110
-                        }
-                    }
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 110
-                        }
-                    }
-
-                    Text {
-                        anchors.centerIn: parent
-                        anchors.verticalCenterOffset: -2
+                    UI.ActionButton {
+                        id: moreButton
                         text: "⋯"
-                        color: fullView.textColor
-                        opacity: 0.75
-                        font.pixelSize: 14
-                        font.bold: true
-                    }
-                    MouseArea {
-                        id: overflowMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: overflowMenu.opened ? overflowMenu.close() : overflowMenu.open()
-                        ToolTip.text: i18n("More actions")
-                        ToolTip.visible: containsMouse && !overflowMenu.opened
-                        ToolTip.delay: 500
-                    }
-                    Popup {
-                        id: overflowMenu
-                        y: overflowBtn.height + 6
-                        x: overflowBtn.width - implicitWidth
-                        padding: 5
-                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
-
-                        background: Rectangle {
-                            color: Qt.rgba(0.06, 0.06, 0.09, 0.97)
-                            radius: 8
-                            border.color: Qt.rgba(1, 1, 1, 0.10)
-                            border.width: 1
-                        }
-
-                        contentItem: Column {
-                            spacing: 1
-
-                            Repeater {
-                                model: [
-                                    {
-                                        label: fullView.isLoadingGens ? i18n("Refreshing…") : i18n("Refresh generations list"),
-                                        icon: "view-refresh",
-                                        enabled: !fullView.isLoadingGens,
-                                        visible: true,
-                                        action: "refresh"
-                                    },
-                                    {
-                                        label: fullView.isCheckingFlake ? i18n("Checking flake…") : i18n("Check flake for updates"),
-                                        icon: "view-refresh",
-                                        enabled: !fullView.isCheckingFlake,
-                                        visible: fullView.showFlakeSection,
-                                        action: "flake"
-                                    },
-                                    {
-                                        label: i18n("Configure widget…"),
-                                        icon: "configure",
-                                        enabled: true,
-                                        visible: true,
-                                        action: "configure"
-                                    },
-                                    {
-                                        label: i18n("KDE Store Page"),
-                                        icon: "kde",
-                                        enabled: true,
-                                        visible: true,
-                                        action: "store"
-                                    },
-                                    {
-                                        label: i18n("GitHub Repository"),
-                                        icon: "vcs-code-collaborator",
-                                        enabled: true,
-                                        visible: true,
-                                        action: "github"
-                                    }
-                                ]
-
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    visible: modelData.visible
-                                    height: modelData.visible ? 30 : 0
-                                    width: menuItemRow.implicitWidth + 24
-                                    radius: 5
-                                    color: itemMa.containsMouse && modelData.enabled ? Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.15) : "transparent"
-                                    Behavior on color {
-                                        ColorAnimation {
-                                            duration: 80
-                                        }
-                                    }
-
-                                    RowLayout {
-                                        id: menuItemRow
-                                        anchors.centerIn: parent
-                                        spacing: 8
-
-                                        Kirigami.Icon {
-                                            source: modelData.icon
-                                            implicitWidth: 14
-                                            implicitHeight: 14
-                                            isMask: true
-                                            color: fullView.textColor
-                                            opacity: modelData.enabled ? 0.70 : 0.28
-                                        }
-                                        Text {
-                                            text: modelData.label
-                                            color: fullView.textColor
-                                            opacity: modelData.enabled ? 0.85 : 0.35
-                                            font.pixelSize: fullView.fpx(8.5)
-                                        }
-                                    }
-
-                                    MouseArea {
-                                        id: itemMa
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        enabled: modelData.enabled
-                                        cursorShape: modelData.enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                        onClicked: {
-                                            overflowMenu.close();
-                                            const a = modelData.action;
-                                            if (a === "refresh")
-                                                fullView.refreshRequested();
-                                            else if (a === "flake")
-                                                fullView.checkFlakeRequested();
-                                            else if (a === "configure")
-                                                fullView.configureRequested();
-                                            else if (a === "store")
-                                                Qt.openUrlExternally("https://store.kde.org/p/2360222/");
-                                            else if (a === "github")
-                                                Qt.openUrlExternally("https://github.com/Muddyblack/kde-nixdatifier");
-                                        }
-                                    }
-                                }
+                        implicitWidth: 27
+                        flatStyle: true
+                        font.pixelSize: 15
+                        tip: qsTr("More actions")
+                        onClicked: moreMenu.open()
+                        Menu {
+                            id: moreMenu
+                            y: moreButton.height
+                            MenuItem {
+                                text: qsTr("Refresh generations list")
+                                enabled: !fullView.isLoadingGens
+                                onTriggered: fullView.refreshRequested()
+                            }
+                            MenuItem {
+                                text: qsTr("Check flake for updates")
+                                enabled: !fullView.isCheckingFlake
+                                visible: fullView.showFlakeSection
+                                height: visible ? implicitHeight : 0
+                                onTriggered: fullView.checkFlakeRequested()
+                            }
+                            MenuItem {
+                                text: qsTr("Configure widget…")
+                                onTriggered: fullView.configureRequested()
+                            }
+                            MenuItem {
+                                text: qsTr("Clean up Nix store…")
+                                onTriggered: cleanupMenu.open()
+                            }
+                            MenuSeparator {}
+                            MenuItem {
+                                text: qsTr("KDE Store Page")
+                                onTriggered: Qt.openUrlExternally("https://store.kde.org/p/2360222/")
+                            }
+                            MenuItem {
+                                text: qsTr("GitHub Repository")
+                                onTriggered: Qt.openUrlExternally("https://github.com/Muddyblack/kde-nixdatifier")
                             }
                         }
                     }
                 }
             }
-
-            // Row 3: command buttons (expanded full width, only shown when configured)
-            RowLayout {
+            Flow {
                 Layout.fillWidth: true
-                Layout.topMargin: 4
-                spacing: 8
-                visible: fullView.showCommandButtons && fullView.customCommands.length > 0
-
-                Repeater {
-                    model: fullView.showCommandButtons ? fullView.customCommands.slice(0, 4) : []
-                    delegate: Rectangle {
-                        required property var modelData
-                        readonly property string btnLabel: modelData.label || modelData.cmd || ""
-                        readonly property string btnCmd: modelData.cmd || ""
-                        readonly property color btnColor: fullView.accentColor
-
-                        visible: btnLabel !== "" && btnCmd !== ""
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 28
-                        radius: 6
-                        color: btnMa.containsMouse ? Qt.rgba(btnColor.r, btnColor.g, btnColor.b, 0.25) : Qt.rgba(btnColor.r, btnColor.g, btnColor.b, 0.10)
-                        border.color: btnMa.containsMouse ? Qt.rgba(btnColor.r, btnColor.g, btnColor.b, 0.60) : Qt.rgba(btnColor.r, btnColor.g, btnColor.b, 0.30)
-                        border.width: 1
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 110
-                            }
-                        }
-                        Behavior on border.color {
-                            ColorAnimation {
-                                duration: 110
-                            }
-                        }
-
-                        Text {
-                            id: btnLabelText
-                            anchors.centerIn: parent
-                            text: btnLabel
-                            color: btnColor
-                            font.pixelSize: fullView.fpx(10)
-                            font.bold: true
-                            font.letterSpacing: 0.3
-                        }
-                        MouseArea {
-                            id: btnMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: fullView.runCommand(btnCmd, btnLabel)
-                            ToolTip.text: i18n("Run: %1").arg(btnCmd)
-                            ToolTip.visible: containsMouse
-                            ToolTip.delay: 600
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Inline confirm bar ────────────────────────────────────────────────
-        Rectangle {
-            id: confirmBar
-            Layout.fillWidth: true
-            visible: fullView.pendingAction !== "" && fullView.pendingGenNum > 0
-            implicitHeight: visible ? confirmBarCol.implicitHeight + 14 : 0
-            radius: 6
-            color: fullView.pendingAction === "delete" ? Qt.rgba(1, 0.25, 0.25, 0.12) : Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.12)
-            border.color: fullView.pendingAction === "delete" ? "#ff5555" : fullView.accentColor
-            border.width: 1
-            clip: true
-
-            ColumnLayout {
-                id: confirmBarCol
-                anchors.fill: parent
-                anchors.margins: 7
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    Kirigami.Icon {
-                        source: fullView.pendingAction === "delete" ? "edit-delete" : (fullView.pendingAction === "switch" ? "media-playback-start" : "system-reboot")
-                        implicitWidth: 18
-                        implicitHeight: 18
-                        color: fullView.pendingAction === "delete" ? "#ff5555" : fullView.accentColor
-                        Layout.alignment: Qt.AlignTop
-                    }
-
-                    Text {
-                        Layout.fillWidth: true
-                        wrapMode: Text.WordWrap
-                        color: fullView.textColor
-                        font.pixelSize: fullView.fpx(10)
-                        text: {
-                            const pw = fullView.usePkexec ? i18n("  A password prompt will appear.") : "";
-                            if (fullView.pendingAction === "delete")
-                                return i18n("Permanently delete generation %1? This cannot be undone.").arg(fullView.pendingGenNum) + pw;
-                            if (fullView.pendingAction === "switch")
-                                return i18n("Activate generation %1 now? Services will restart.").arg(fullView.pendingGenNum) + pw;
-                            return i18n("Boot into generation %1 on next reboot?").arg(fullView.pendingGenNum) + pw;
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-
-                    Item {
-                        Layout.fillWidth: true
-                    }
-
-                    Button {
-                        id: cancelBtn
-                        text: i18n("Cancel")
-                        implicitHeight: 26
-                        font.pixelSize: fullView.fpx(9)
-                        onClicked: fullView.cancelPending()
-                        background: Rectangle {
-                            radius: 4
-                            color: cancelBtn.hovered ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.04)
-                            border.color: Qt.rgba(1, 1, 1, 0.18)
-                            border.width: 1
-                        }
-                        contentItem: Text {
-                            text: cancelBtn.text
-                            color: fullView.textColor
-                            font: cancelBtn.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            leftPadding: 10
-                            rightPadding: 10
-                        }
-                    }
-
-                    Button {
-                        id: okBtn
-                        text: fullView.pendingAction === "delete" ? i18n("Delete") : (fullView.pendingAction === "switch" ? i18n("Activate") : i18n("Set Next Boot"))
-                        implicitHeight: 26
-                        font.pixelSize: fullView.fpx(9)
-                        font.bold: true
-                        onClicked: fullView.confirmPending()
-                        background: Rectangle {
-                            radius: 4
-                            color: fullView.pendingAction === "delete" ? (okBtn.hovered ? Qt.rgba(1, 0.25, 0.25, 0.35) : Qt.rgba(1, 0.25, 0.25, 0.20)) : (okBtn.hovered ? Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.35) : Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.20))
-                            border.color: fullView.pendingAction === "delete" ? "#ff5555" : fullView.accentColor
-                            border.width: 1
-                        }
-                        contentItem: Text {
-                            text: okBtn.text
-                            color: fullView.textColor
-                            font: okBtn.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            leftPadding: 12
-                            rightPadding: 12
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── Cleanup confirm bar ───────────────────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            visible: fullView.pendingCleanup !== ""
-            implicitHeight: visible ? gcConfirmCol.implicitHeight + 14 : 0
-            radius: 6
-            color: Qt.rgba(1, 0.50, 0.25, 0.10)
-            border.color: "#ff9944"
-            border.width: 1
-            clip: true
-
-            ColumnLayout {
-                id: gcConfirmCol
-                anchors.fill: parent
-                anchors.margins: 7
-                spacing: 6
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 8
-
-                    Kirigami.Icon {
-                        source: "edit-clear-all"
-                        implicitWidth: 18
-                        implicitHeight: 18
+                Layout.topMargin: 13
+                spacing: 12
+                Row {
+                    spacing: 5
+                    UI.Icon {
+                        source: "user-identity"
+                        width: 12
+                        height: 12
                         isMask: true
-                        color: "#ff9944"
-                        Layout.alignment: Qt.AlignTop
+                        color: "#7286a3"
                     }
-
+                    Text {
+                        text: fullView.hostname || "—"
+                        color: "#a2b0c5"
+                        font.pixelSize: 10 * fullView.fs
+                    }
+                }
+                Row {
+                    visible: !!fullView.uptime
+                    spacing: 5
+                    UI.Icon {
+                        source: "clock"
+                        width: 12
+                        height: 12
+                        isMask: true
+                        color: "#7286a3"
+                    }
+                    Text {
+                        text: qsTr("Up %1").arg(fullView.uptime)
+                        color: "#a2b0c5"
+                        font.pixelSize: 10 * fullView.fs
+                    }
+                }
+                Row {
+                    visible: !!fullView.lastActivationTime
+                    spacing: 5
+                    UI.Icon {
+                        source: "view-calendar"
+                        width: 12
+                        height: 12
+                        isMask: true
+                        color: "#7286a3"
+                    }
+                    Text {
+                        text: qsTr("Switched %1").arg(fullView.shortActivation())
+                        color: "#8d9db4"
+                        font.pixelSize: 9 * fullView.fs
+                        ToolTip.text: fullView.lastActivationTime
+                        ToolTip.visible: activationHover.hovered
+                        HoverHandler {
+                            id: activationHover
+                        }
+                    }
+                }
+            }
+            Rectangle {
+                visible: fullView.pendingAction !== "" || fullView.pendingCleanup !== ""
+                Layout.fillWidth: true
+                Layout.topMargin: visible ? 10 : 0
+                implicitHeight: confirmRow.implicitHeight + 20
+                radius: 8
+                color: "#18edcc8a"
+                RowLayout {
+                    id: confirmRow
+                    anchors.fill: parent
+                    anchors.margins: 10
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.WordWrap
                         color: fullView.textColor
-                        font.pixelSize: fullView.fpx(10)
-                        text: {
-                            const pw = fullView.usePkexec ? i18n("  A password prompt will appear.") : "";
-                            if (fullView.pendingCleanup === "gc")
-                                return i18n("Run nix-collect-garbage? Unreferenced store paths will be freed. Generations are kept.") + pw;
-                            if (fullView.pendingCleanup === "gc-14d")
-                                return i18n("Delete generations older than 14 days and run GC? This cannot be undone.") + pw;
-                            return i18n("Delete ALL non-current generations and run GC? This cannot be undone.") + pw;
-                        }
-                    }
-                }
-
-                RowLayout {
-                    Layout.fillWidth: true
-                    spacing: 6
-                    Item {
-                        Layout.fillWidth: true
-                    }
-                    Button {
-                        text: i18n("Cancel")
-                        implicitHeight: 26
                         font.pixelSize: fullView.fpx(9)
-                        onClicked: fullView.cancelCleanup()
-                        background: Rectangle {
-                            radius: 4
-                            color: parent.hovered ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.05)
-                            border.color: Qt.rgba(1, 1, 1, 0.20)
-                            border.width: 1
-                        }
-                        contentItem: Text {
-                            text: parent.text
-                            color: fullView.textColor
-                            font: parent.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            leftPadding: 12
-                            rightPadding: 12
-                        }
+                        text: fullView.pendingCleanup ? qsTr("Run this cleanup? Old generations may be removed.") : qsTr("%1 generation #%2?").arg(fullView.pendingAction === "delete" ? qsTr("Delete") : fullView.pendingAction === "switch" ? qsTr("Activate now") : qsTr("Set next boot to")).arg(fullView.pendingGenNum)
                     }
-                    Button {
-                        text: i18n("Run")
-                        implicitHeight: 26
-                        font.pixelSize: fullView.fpx(9)
-                        font.bold: true
-                        onClicked: fullView.confirmCleanup(fullView.pendingCleanup)
-                        background: Rectangle {
-                            radius: 4
-                            color: parent.hovered ? Qt.rgba(1, 0.60, 0.25, 0.35) : Qt.rgba(1, 0.60, 0.25, 0.20)
-                            border.color: "#ff9944"
-                            border.width: 1
-                        }
-                        contentItem: Text {
-                            text: parent.text
-                            color: fullView.textColor
-                            font: parent.font
-                            horizontalAlignment: Text.AlignHCenter
-                            verticalAlignment: Text.AlignVCenter
-                            leftPadding: 12
-                            rightPadding: 12
-                        }
+                    UI.ActionButton {
+                        text: qsTr("Cancel")
+                        onClicked: fullView.pendingCleanup ? fullView.cancelCleanup() : fullView.cancelPending()
+                    }
+                    UI.ActionButton {
+                        text: qsTr("Confirm")
+                        primary: true
+                        enabled: !fullView.isBusy
+                        onClicked: fullView.pendingCleanup ? fullView.confirmCleanup(fullView.pendingCleanup) : fullView.confirmPending()
                     }
                 }
             }
-        }
-
-        // ── Busy bar ──────────────────────────────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            height: fullView.isBusy ? 28 : 0
-            clip: true
-            radius: 5
-            color: Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.12)
-            border.color: Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.3)
-            border.width: 1
-            Behavior on height {
-                NumberAnimation {
-                    duration: 200
+            Item {
+                objectName: "navigation"
+                Layout.fillWidth: true
+                Layout.topMargin: 12
+                implicitHeight: 42 * fullView.fs
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: "#0dffffff"
                 }
-            }
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 6
-                spacing: 6
-                Kirigami.Icon {
-                    id: busyBarSpinner
-                    source: Qt.resolvedUrl("nixos-logo.svg")
-                    isMask: fullView.iconStyle !== "colored"
-                    color: {
-                        if (fullView.iconStyle === "white")
-                            return "#ffffff";
-                        if (fullView.iconStyle === "black")
-                            return "#000000";
-                        return fullView.accentColor;
-                    }
-                    visible: fullView.isBusy
-                    implicitWidth: 18
-                    implicitHeight: 18
-                    RotationAnimation on rotation {
-                        running: busyBarSpinner.visible && fullView.uiActive
-                        from: 0
-                        to: 360
-                        duration: 1400
-                        loops: Animation.Infinite
-                    }
-                }
-                Text {
-                    text: fullView.actionType === "delete" ? i18n("Deleting generation %1…").arg(fullView.actionGenNum) : (fullView.actionType === "switch" ? i18n("Activating generation %1 (live switch)…").arg(fullView.actionGenNum) : i18n("Setting generation %1 as next boot…").arg(fullView.actionGenNum))
-                    color: fullView.textColor
-                    font.pixelSize: fullView.fpx(9)
-                }
-            }
-        }
-
-        // ── View mode tab bar (segmented control) ─────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 30
-            radius: 6
-            color: Qt.rgba(0, 0, 0, 0.18)
-            border.color: Qt.rgba(1, 1, 1, 0.06)
-            border.width: 1
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 2
-                spacing: 0
-
-                Repeater {
-                    model: [
-                        {
-                            id: "timeline",
-                            label: i18n("Timeline"),
-                            icon: fullView.svg("ic_timeline")
-                        },
-                        {
-                            id: "updates",
-                            label: i18n("Updates"),
-                            icon: fullView.svg("ic_updates")
-                        },
-                        {
-                            id: "diff",
-                            label: i18n("Diff"),
-                            icon: fullView.svg("ic_diff")
-                        },
-                        {
-                            id: "secrets",
-                            label: i18n("Secrets"),
-                            icon: fullView.svg("ic_secrets")
-                        },
-                        {
-                            id: "hash",
-                            label: i18n("Hash"),
-                            icon: fullView.svg("ic_hash")
-                        }
-                    ]
-
-                    Rectangle {
-                        readonly property bool active: fullView.activeViewMode === modelData.id
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        radius: 5
-                        color: active ? Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.20) : (tabMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.05) : "transparent")
-                        border.color: active ? Qt.rgba(fullView.accentColor.r, fullView.accentColor.g, fullView.accentColor.b, 0.45) : "transparent"
-                        border.width: 1
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 120
-                            }
-                        }
-
-                        // Active accent strip at bottom
-                        Rectangle {
-                            visible: parent.active
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                bottom: parent.bottom
-                                leftMargin: 8
-                                rightMargin: 8
-                                bottomMargin: 2
-                            }
-                            height: 2
-                            radius: 1
-                            color: fullView.accentColor
-                        }
-
-                        // Update count badge
-                        Rectangle {
-                            visible: modelData.id === "updates" && fullView.flakeUpdates.length > 0
-                            anchors.top: parent.top
-                            anchors.right: parent.right
-                            anchors.topMargin: 1
-                            anchors.rightMargin: 3
-                            width: 14
-                            height: 14
-                            radius: 7
-                            color: "#cc88ff"
-                            border.color: Kirigami.Theme.backgroundColor
-                            border.width: 1
-                            Text {
-                                anchors.centerIn: parent
-                                text: fullView.flakeUpdates.length
-                                color: "#fff"
-                                font.pixelSize: 7
-                                font.bold: true
-                            }
-                        }
-
-                        RowLayout {
-                            anchors.centerIn: parent
-                            spacing: 5
-                            Kirigami.Icon {
-                                source: modelData.icon
-                                implicitWidth: 13
-                                implicitHeight: 13
-                                isMask: true
-                                color: parent.parent.active ? fullView.accentColor : (tabMouse.containsMouse ? Qt.rgba(fullView.textColor.r, fullView.textColor.g, fullView.textColor.b, 0.75) : Qt.rgba(fullView.textColor.r, fullView.textColor.g, fullView.textColor.b, 0.45))
-                                Behavior on color {
-                                    ColorAnimation {
-                                        duration: 100
-                                    }
+                Flickable {
+                    anchors.fill: parent
+                    contentWidth: tabsRow.width
+                    contentHeight: height
+                    clip: true
+                    boundsBehavior: Flickable.StopAtBounds
+                    Row {
+                        id: tabsRow
+                        spacing: fullView.width < 440 ? 16 : 22
+                        Repeater {
+                            model: [
+                                {
+                                    key: "timeline",
+                                    label: qsTr("Generations"),
+                                    glyph: "ic_history"
+                                },
+                                {
+                                    key: "updates",
+                                    label: qsTr("Updates"),
+                                    glyph: "ic_outline_updates"
+                                },
+                                {
+                                    key: "diff",
+                                    label: qsTr("Compare"),
+                                    glyph: "ic_outline_compare"
+                                },
+                                {
+                                    key: "tools",
+                                    label: qsTr("Tools"),
+                                    glyph: "ic_grid"
                                 }
-                            }
-                            Text {
-                                id: tabLabel
+                            ]
+                            UI.NavigationTab {
+                                required property var modelData
+                                objectName: "tab-" + modelData.key
                                 text: modelData.label
-                                color: parent.parent.active ? fullView.accentColor : (tabMouse.containsMouse ? Qt.rgba(fullView.textColor.r, fullView.textColor.g, fullView.textColor.b, 0.80) : Qt.rgba(fullView.textColor.r, fullView.textColor.g, fullView.textColor.b, 0.50))
-                                font.pixelSize: fullView.fpx(9)
-                                font.bold: parent.parent.active
-                                Behavior on color {
-                                    ColorAnimation {
-                                        duration: 100
-                                    }
-                                }
+                                glyph: fullView.svg(modelData.glyph)
+                                selected: modelData.key === "tools" ? fullView.inTools : fullView.activeViewMode === modelData.key
+                                count: modelData.key === "updates" && fullView.showFlakeSection ? fullView.flakeUpdates.length : -1
+                                accent: fullView.accentColor
+                                scaleFactor: fullView.fs
+                                showIcon: fullView.width >= 440
+                                onClicked: fullView.viewModeChanged(modelData.key)
                             }
-                        }
-
-                        MouseArea {
-                            id: tabMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: fullView.viewModeChanged(modelData.id)
                         }
                     }
                 }
             }
         }
-
-        // ── Content area ──────────────────────────────────────────────────────
         Item {
+            objectName: "viewBody"
+            clip: true
+            Layout.leftMargin: fullView.contentMargin
+            Layout.rightMargin: fullView.contentMargin
+            Layout.topMargin: 17
+            Layout.bottomMargin: 16
             Layout.fillWidth: true
             Layout.fillHeight: true
-
             TimelineTab {
                 id: timelineTab
-                uiActive: fullView.uiActive
+                objectName: "generationTimeline"
+                generationCounts: fullView.generationCounts
+                onGenerationCountsRequested: genNum => fullView.generationCountsRequested(genNum)
+                storePathCache: fullView.storePathCache
+                onStorePathRequested: pkg => fullView.storePathRequested(pkg)
+                enableGlow: fullView.enableGlow
+                enableMotion: fullView.enableMotion
+                enableLiveSwitch: fullView.enableLiveSwitch
+                diffViewMode: fullView.diffViewMode
+                uiActive: fullView.uiActive && visible
                 anchors.fill: parent
                 activeViewMode: fullView.activeViewMode
                 accentColor: fullView.accentColor
@@ -1189,6 +519,7 @@ Item {
                 generations: fullView.generations
                 selectedGenNum: fullView.selectedGenNum
                 bootedGenNum: fullView.bootedGenNum
+                activeGenNum: fullView.activeGenNum
                 detailsCache: fullView.detailsCache
                 diffFilter: fullView.diffFilter
                 diffMode: fullView.diffMode
@@ -1212,7 +543,19 @@ Item {
             }
 
             UpdatesTab {
-                uiActive: fullView.uiActive
+                enableGlow: fullView.enableGlow
+                objectName: "updatesView"
+                storePathCache: fullView.storePathCache
+                onStorePathRequested: pkg => fullView.storePathRequested(pkg)
+                updatingInput: fullView.updatingInput
+                anchors.fill: parent
+                isBusy: fullView.isBusy
+                iconCache: fullView.iconCache
+                metaCache: fullView.metaCache
+                showPackageIcons: fullView.showPackageIcons
+                onCopyToClipboard: text => fullView.copyToClipboard(text)
+                onCheckRequested: fullView.checkFlakeRequested()
+                uiActive: fullView.uiActive && visible
                 activeViewMode: fullView.activeViewMode
                 accentColor: fullView.accentColor
                 textColor: fullView.textColor
@@ -1226,15 +569,13 @@ Item {
 
                 onDryRunRequested: (inputName, overrideRef) => fullView.dryRunRequested(inputName, overrideRef)
                 onUpdateInputRequested: inputName => fullView.updateInputRequested(inputName)
-                onDryRunCacheCleared: inputName => {
-                    var c = Object.assign({}, fullView.dryRunCache);
-                    delete c[inputName];
-                    fullView.dryRunCache = c;
-                }
             }
 
             DiffTab {
                 id: diffTab
+                enableGlow: fullView.enableGlow
+                storePathCache: fullView.storePathCache
+                onStorePathRequested: pkg => fullView.storePathRequested(pkg)
                 activeViewMode: fullView.activeViewMode
                 accentColor: fullView.accentColor
                 textColor: fullView.textColor
@@ -1253,102 +594,435 @@ Item {
                 onDiffViewModePicked: mode => fullView.diffViewMode = mode
             }
 
-            SecretsTab {
-                activeViewMode: fullView.activeViewMode
-                textColor: fullView.textColor
-                fs: fullView.fs
-                deployedSecrets: fullView.deployedSecrets
-                sourceSecrets: fullView.sourceSecrets
+            ScrollView {
+                id: toolsScroll
+                objectName: "toolsView"
+                anchors.fill: parent
+                clip: true
+                contentWidth: availableWidth
+                visible: fullView.activeViewMode === "tools"
+                ColumnLayout {
+                    width: toolsScroll.availableWidth
+                    spacing: 0
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.bottomMargin: 17
+                        spacing: 10
+                        Repeater {
+                            model: [
+                                {
+                                    key: "secrets",
+                                    label: qsTr("Secrets"),
+                                    hint: qsTr("Inspect deployed and source secrets."),
+                                    glyph: "ic_secrets"
+                                },
+                                {
+                                    key: "hash",
+                                    label: qsTr("Hash calculator"),
+                                    hint: qsTr("Hashes for URLs, files, and store paths."),
+                                    glyph: "ic_hash"
+                                }
+                            ]
+                            AbstractButton {
+                                id: toolButton
+                                required property var modelData
+                                Layout.fillWidth: true
+                                Layout.preferredWidth: 1
+                                Layout.alignment: Qt.AlignTop
+                                implicitHeight: toolContent.implicitHeight + 30
+                                padding: 13
+                                hoverEnabled: true
+                                onClicked: fullView.viewModeChanged(modelData.key)
+                                background: Rectangle {
+                                    radius: 9
+                                    color: toolButton.hovered ? UI.Theme.wash(fullView.accentColor, .05) : "#03ffffff"
+                                    border.color: toolButton.hovered ? UI.Theme.wash(fullView.accentColor, .3) : "#10ffffff"
+                                }
+                                contentItem: ColumnLayout {
+                                    id: toolContent
+                                    spacing: 0
+                                    UI.Icon {
+                                        Layout.bottomMargin: 15
+                                        source: fullView.svg(toolButton.modelData.glyph)
+                                        implicitWidth: 21
+                                        implicitHeight: 21
+                                        isMask: true
+                                        color: fullView.accentColor
+                                    }
+                                    Text {
+                                        Layout.bottomMargin: 7
+                                        text: toolButton.modelData.label
+                                        color: fullView.textColor
+                                        font.pixelSize: 11 * fullView.fs
+                                        font.weight: Font.Medium
+                                    }
+                                    Text {
+                                        Layout.fillWidth: true
+                                        text: toolButton.modelData.hint
+                                        color: "#8fa0b7"
+                                        font.pixelSize: 9 * fullView.fs
+                                        wrapMode: Text.WordWrap
+                                        lineHeight: 1.6
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        implicitHeight: storageColumn.implicitHeight + 26
+                        radius: 9
+                        color: "#03ffffff"
+                        border.color: "#0effffff"
+                        ColumnLayout {
+                            id: storageColumn
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 13
+                            spacing: 0
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: qsTr("Nix store")
+                                    color: fullView.textColor
+                                    font.pixelSize: 10 * fullView.fs
+                                }
+                                Text {
+                                    text: fullView.formatBytes(fullView.diskStoreBytes) || "—"
+                                    color: "#93a5bd"
+                                    font.pixelSize: 9 * fullView.fs
+                                }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.topMargin: 13
+                                Layout.bottomMargin: 10
+                                implicitHeight: 5
+                                radius: 3
+                                clip: true
+                                color: "#0affffff"
+                                Rectangle {
+                                    anchors.fill: parent
+                                    color: "#779ecc"
+                                    visible: fullView.diskStoreBytes > 0
+                                }
+                                Rectangle {
+                                    anchors.right: parent.right
+                                    height: parent.height
+                                    width: fullView.diskStoreBytes > 0 ? parent.width * Math.max(0, Math.min(1, fullView.diskReclaimableBytes / fullView.diskStoreBytes)) : 0
+                                    color: UI.Theme.changed
+                                }
+                                ToolTip.text: qsTr("Reclaimable portion of the Nix store")
+                                ToolTip.visible: storageHover.hovered
+                                HoverHandler {
+                                    id: storageHover
+                                }
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: qsTr("%1 free").arg(fullView.formatBytes(fullView.diskFreeBytes) || "—")
+                                    color: "#8fa0b7"
+                                    font.pixelSize: 9 * fullView.fs
+                                }
+                                Text {
+                                    text: qsTr("%1 reclaimable").arg(fullView.diskReclaimableBytes < 0 ? "—" : fullView.diskReclaimableBytes === 0 ? "0 B" : fullView.formatBytes(fullView.diskReclaimableBytes))
+                                    color: UI.Theme.changed
+                                    font.pixelSize: 9 * fullView.fs
+                                }
+                            }
+                        }
+                    }
+                    UI.ActionButton {
+                        Layout.topMargin: 13
+                        text: qsTr("Clean up old generations…")
+                        glyph: fullView.svg("ic_delete")
+                        font.pixelSize: 10 * fullView.fs
+                        onClicked: cleanupMenu.open()
+                    }
+                }
             }
-
-            HashTab {
-                uiActive: fullView.uiActive
-                activeViewMode: fullView.activeViewMode
-                accentColor: fullView.accentColor
-                textColor: fullView.textColor
-                fs: fullView.fs
-                iconStyle: fullView.iconStyle
-                hashResult: fullView.hashResult
-                isProbingHash: fullView.isProbingHash
-
-                onHashRequested: (mode, input) => fullView.hashRequested(mode, input)
-                onCopyToClipboard: t => fullView.copyToClipboard(t)
+        }
+        Rectangle {
+            id: storageFooter
+            objectName: "storageFooter"
+            Layout.fillWidth: true
+            implicitHeight: 42 * fullView.fs
+            color: "#0c000000"
+            Rectangle {
+                anchors.top: parent.top
+                width: parent.width
+                height: 1
+                color: "#0dffffff"
+            }
+            RowLayout {
+                anchors.fill: parent
+                anchors.leftMargin: fullView.contentMargin
+                anchors.rightMargin: fullView.contentMargin
+                spacing: 6
+                UI.Icon {
+                    source: fullView.isSpinning ? fullView.svg("ic_info") : "drive-harddisk"
+                    implicitWidth: 13
+                    implicitHeight: 13
+                    isMask: true
+                    color: "#76869b"
+                }
+                Text {
+                    objectName: "footerStatus"
+                    Layout.fillWidth: true
+                    elide: Text.ElideRight
+                    readonly property string storage: (fullView.formatBytes(fullView.diskStoreBytes) || "—") + qsTr(" store  ·  %1 reclaimable").arg(fullView.diskReclaimableBytes < 0 ? "—" : fullView.diskReclaimableBytes === 0 ? "0 B" : fullView.formatBytes(fullView.diskReclaimableBytes))
+                    text: fullView.isSpinning ? fullView.busyLabel || qsTr("Working…") : storage
+                    color: fullView.isSpinning ? fullView.accentColor : "#8f9db0"
+                    font.pixelSize: 9 * fullView.fs
+                    HoverHandler {
+                        id: footerHover
+                    }
+                    ToolTip.visible: footerHover.hovered
+                    ToolTip.text: fullView.isSpinning ? text + "\n" + storage : storage
+                }
+                UI.ActionButton {
+                    id: feedbackButton
+                    objectName: "feedbackIndicator"
+                    visible: fullView.toasts.length > 0
+                    readonly property var latest: fullView.toasts.length ? fullView.toasts[fullView.toasts.length - 1] : ({
+                            msg: "",
+                            err: false
+                        })
+                    flatStyle: true
+                    primary: true
+                    implicitHeight: 27
+                    glyph: fullView.svg(latest.err ? "ic_info" : "ic_check")
+                    text: latest.err ? qsTr("Notice") : qsTr("Done")
+                    accent: latest.err ? UI.Theme.changed : UI.Theme.positive
+                    tip: latest.msg
+                    font.pixelSize: 9 * fullView.fs
+                    onClicked: feedbackPopup.opened ? feedbackPopup.close() : feedbackPopup.open()
+                    Popup {
+                        id: feedbackPopup
+                        objectName: "feedbackDetails"
+                        parent: fullView
+                        width: Math.min(380, fullView.width - 2 * fullView.contentMargin)
+                        x: fullView.width - width - fullView.contentMargin
+                        y: fullView.height - height - 48
+                        padding: 13
+                        modal: false
+                        focus: true
+                        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
+                        background: Rectangle {
+                            color: "#1b2330"
+                            border.color: "#29a3b9de"
+                            radius: 9
+                        }
+                        contentItem: ColumnLayout {
+                            spacing: 10
+                            Text {
+                                text: qsTr("Status")
+                                color: fullView.textColor
+                                font.pixelSize: 12 * fullView.fs
+                                font.weight: Font.Medium
+                            }
+                            Text {
+                                Layout.fillWidth: true
+                                text: feedbackButton.latest.msg
+                                textFormat: Text.PlainText
+                                color: "#bac7d9"
+                                wrapMode: Text.WrapAnywhere
+                                font.pixelSize: 11 * fullView.fs
+                                maximumLineCount: 9
+                                elide: Text.ElideRight
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                UI.ActionButton {
+                                    glyph: fullView.svg("ic_copy")
+                                    text: qsTr("Copy")
+                                    onClicked: fullView.copyToClipboard(feedbackButton.latest.msg)
+                                }
+                                Item {
+                                    Layout.fillWidth: true
+                                }
+                                UI.ActionButton {
+                                    text: qsTr("Dismiss")
+                                    onClicked: {
+                                        fullView.dismissToast(fullView.toasts.length - 1);
+                                        if (!fullView.toasts.length)
+                                            feedbackPopup.close();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                UI.ActionButton {
+                    id: commandsButton
+                    objectName: "commandsButton"
+                    visible: fullView.showCommandButtons
+                    text: qsTr("Commands ›")
+                    glyph: "utilities-terminal"
+                    flatStyle: true
+                    font.pixelSize: 9 * fullView.fs
+                    onClicked: fullView.openCommands()
+                }
+            }
+            Item {
+                objectName: "footerProgress"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: fullView.bgRadius
+                anchors.rightMargin: fullView.bgRadius
+                height: 2
+                clip: true
+                visible: fullView.isSpinning
+                Rectangle {
+                    id: progress
+                    property real sweep: 0
+                    width: parent.width * (fullView.enableMotion ? .35 : 1)
+                    height: parent.height
+                    x: fullView.enableMotion ? (parent.width + width) * sweep - width : 0
+                    color: fullView.accentColor
+                    NumberAnimation on sweep {
+                        running: fullView.isSpinning && fullView.uiActive && fullView.enableMotion && !fullView.commandsOpen
+                        from: 0
+                        to: 1
+                        duration: 1600
+                        loops: Animation.Infinite
+                        easing.type: Easing.InOutSine
+                    }
+                }
             }
         }
     }
-
-    // ── Floating toast overlay ────────────────────────────────────────────────
-    // Anchored to FullView bottom-right so toasts float above content instead of
-    // pushing it down. Newest toast appears at the bottom; older ones stack up.
-    ColumnLayout {
-        id: toastOverlay
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.rightMargin: fullView.showBg ? 16 : 8
-        anchors.bottomMargin: fullView.showBg ? 16 : 8
-        width: Math.min(340, parent.width - (fullView.showBg ? 32 : 16))
-        spacing: 6
-        z: 100
-
-        Repeater {
-            model: fullView.toasts
-            delegate: Rectangle {
+    CommandsView {
+        id: commandsView
+        objectName: "commandsView"
+        anchors.fill: parent
+        visible: fullView.commandsOpen
+        commands: fullView.customCommands
+        textColor: fullView.textColor
+        accentColor: fullView.accentColor
+        fs: fullView.fs
+        isBusy: fullView.isBusy
+        working: fullView.isSpinning && fullView.uiActive
+        enableMotion: fullView.enableMotion
+        iconStyle: fullView.iconStyle
+        onCloseRequested: fullView.closeCommands()
+        onConfigureRequested: {
+            fullView.closeCommands();
+            fullView.configureRequested();
+        }
+        onRunRequested: (cmd, label) => {
+            if (fullView.isBusy)
+                return;
+            fullView.closeCommands();
+            fullView.runCommand(cmd, label);
+        }
+    }
+    Item {
+        id: toolsOverlay
+        objectName: "toolsOverlay"
+        anchors.fill: parent
+        visible: fullView.toolsOverlayOpen
+        ColumnLayout {
+            anchors.fill: parent
+            spacing: 0
+            RowLayout {
                 Layout.fillWidth: true
-                Layout.preferredHeight: toastLayout.implicitHeight + 12
-                radius: 6
-                color: modelData.err ? Qt.rgba(0.20, 0.04, 0.04, 0.92) : Qt.rgba(0.04, 0.16, 0.06, 0.92)
-                border.color: modelData.err ? "#ff5555" : "#55cc55"
-                border.width: 1
-                clip: true
-                opacity: 0
-                Component.onCompleted: opacity = 1
-                Behavior on opacity {
-                    NumberAnimation {
-                        duration: 160
-                    }
+                Layout.leftMargin: fullView.contentMargin
+                Layout.rightMargin: fullView.contentMargin
+                Layout.topMargin: 20
+                Layout.bottomMargin: 18
+                spacing: 9
+                UI.ActionButton {
+                    objectName: "toolsOverlayBack"
+                    glyph: "go-previous"
+                    flatStyle: true
+                    tip: qsTr("Back to Tools")
+                    onClicked: fullView.viewModeChanged("tools")
                 }
-
-                RowLayout {
-                    id: toastLayout
-                    anchors.fill: parent
-                    anchors.margins: 8
-                    spacing: 8
-                    Kirigami.Icon {
-                        source: modelData.err ? "dialog-error" : "dialog-ok"
-                        implicitWidth: 16
-                        implicitHeight: 16
-                        color: modelData.err ? "#ff5555" : "#55cc55"
-                        Layout.alignment: Qt.AlignTop
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: modelData.msg
-                        color: fullView.textColor
-                        font.pixelSize: fullView.fpx(9)
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 6
-                        elide: Text.ElideRight
-                    }
-                    ToolButton {
-                        visible: !!modelData.err
-                        icon.name: "edit-copy"
-                        implicitWidth: 20
-                        implicitHeight: 20
-                        Layout.alignment: Qt.AlignTop
-                        ToolTip.text: i18n("Copy error message")
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 600
-                        onClicked: fullView.copyToClipboard(modelData.msg)
-                    }
-                    ToolButton {
-                        icon.name: "window-close"
-                        implicitWidth: 20
-                        implicitHeight: 20
-                        Layout.alignment: Qt.AlignTop
-                        onClicked: fullView.dismissToast(index)
-                    }
+                UI.Flake {
+                    implicitWidth: 24
+                    implicitHeight: 24
+                    working: fullView.isSpinning && fullView.uiActive
+                    motion: fullView.enableMotion
+                    style: fullView.iconStyle
+                    accent: fullView.accentColor
+                }
+                Text {
+                    Layout.fillWidth: true
+                    text: fullView.activeViewMode === "hash" ? qsTr("Hash calculator") : qsTr("Secrets")
+                    color: fullView.textColor
+                    font.pixelSize: 14 * fullView.fs
+                    font.weight: Font.Medium
                 }
             }
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: 1
+                color: UI.Theme.line
+            }
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.leftMargin: fullView.contentMargin
+                Layout.rightMargin: fullView.contentMargin
+                Layout.topMargin: 17
+                Layout.bottomMargin: 20
+                SecretsTab {
+                    anchors.fill: parent
+                    activeViewMode: fullView.activeViewMode
+                    textColor: fullView.textColor
+                    fs: fullView.fs
+                    deployedSecrets: fullView.deployedSecrets
+                    sourceSecrets: fullView.sourceSecrets
+                }
+                HashTab {
+                    enableMotion: fullView.enableMotion
+                    anchors.fill: parent
+                    uiActive: fullView.uiActive && visible
+                    activeViewMode: fullView.activeViewMode
+                    accentColor: fullView.accentColor
+                    textColor: fullView.textColor
+                    fs: fullView.fs
+                    iconStyle: fullView.iconStyle
+                    hashResult: fullView.hashResult
+                    isProbingHash: fullView.isProbingHash
+
+                    onHashRequested: (mode, input) => fullView.hashRequested(mode, input)
+                    onCopyToClipboard: t => fullView.copyToClipboard(t)
+                }
+            }
+        }
+    }
+    Menu {
+        id: cleanupMenu
+        x: Math.max(0, fullView.width - width - 18)
+        y: 64
+        MenuItem {
+            text: qsTr("Collect unused store paths")
+            enabled: !fullView.isBusy
+            onTriggered: fullView.cleanupVariantPicked("gc")
+        }
+        MenuItem {
+            text: qsTr("Remove generations older than 14 days")
+            enabled: !fullView.isBusy
+            onTriggered: fullView.cleanupVariantPicked("gc-14d")
+        }
+        MenuItem {
+            text: qsTr("Remove all non-current generations")
+            enabled: !fullView.isBusy
+            onTriggered: fullView.cleanupVariantPicked("gc-all")
+        }
+        MenuItem {
+            visible: fullView.gcCustomCommand !== ""
+            height: visible ? implicitHeight : 0
+            text: qsTr("Run custom cleanup command")
+            enabled: !fullView.isBusy
+            onTriggered: fullView.cleanupVariantPicked("gc-custom")
         }
     }
 }

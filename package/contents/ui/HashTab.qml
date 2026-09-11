@@ -1,13 +1,14 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "shared" as UI
 
 Item {
     id: hashTab
 
     // ── Required properties ───────────────────────────────────────────────────
     // See FullView.uiActive — false while the popup is closed.
+    property bool enableMotion: true
     property bool uiActive: true
     required property color accentColor
     required property color textColor
@@ -18,7 +19,7 @@ Item {
     property bool isProbingHash: false
 
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * Kirigami.Theme.smallFont.pixelSize * fs));
+        return Math.max(1, Math.round(n / 9.0 * (UI.Theme.smallFont.pixelSize > 0 ? UI.Theme.smallFont.pixelSize : 11) * fs));
     }
 
     signal hashRequested(string mode, string input)
@@ -40,28 +41,28 @@ Item {
                 model: [
                     {
                         id: "url",
-                        label: i18n("URL"),
-                        tip: i18n("sha256 of a remote file (fetchurl)")
+                        label: qsTr("URL"),
+                        tip: qsTr("sha256 of a remote file (fetchurl)")
                     },
                     {
                         id: "zip",
-                        label: i18n("Zip/Tar"),
-                        tip: i18n("sha256 of an unpacked archive (fetchzip)")
+                        label: qsTr("Zip/Tar"),
+                        tip: qsTr("sha256 of an unpacked archive (fetchzip)")
                     },
                     {
                         id: "github",
-                        label: i18n("GitHub"),
-                        tip: i18n("owner/repo/rev → sha256 (fetchFromGitHub)")
+                        label: qsTr("GitHub"),
+                        tip: qsTr("owner/repo/rev → sha256 (fetchFromGitHub)")
                     },
                     {
                         id: "file",
-                        label: i18n("File"),
-                        tip: i18n("sha256sum of a local file")
+                        label: qsTr("File"),
+                        tip: qsTr("sha256sum of a local file")
                     },
                     {
                         id: "store",
-                        label: i18n("Store"),
-                        tip: i18n("NAR hash of a /nix/store/... path")
+                        label: qsTr("Store"),
+                        tip: qsTr("NAR hash of a /nix/store/... path")
                     }
                 ]
 
@@ -121,7 +122,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 1
+            implicitHeight: 1
             color: Qt.rgba(1, 1, 1, 0.08)
         }
 
@@ -131,15 +132,15 @@ Item {
             text: {
                 switch (hashModeHolder.value) {
                 case "url":
-                    return i18n("https://example.com/file.tar.gz");
+                    return qsTr("https://example.com/file.tar.gz");
                 case "zip":
-                    return i18n("https://example.com/archive.zip");
+                    return qsTr("https://example.com/archive.zip");
                 case "github":
-                    return i18n("owner/repo/v1.2.3   or   owner/repo/abc1234");
+                    return qsTr("owner/repo/v1.2.3   or   owner/repo/abc1234");
                 case "file":
-                    return i18n("/path/to/local/file");
+                    return qsTr("/path/to/local/file");
                 case "store":
-                    return i18n("/nix/store/abc123...-some-package");
+                    return qsTr("/nix/store/abc123...-some-package");
                 default:
                     return "";
                 }
@@ -161,8 +162,8 @@ Item {
                 Layout.fillWidth: true
                 implicitHeight: 28
                 font.pixelSize: hashTab.fpx(9)
-                font.family: Kirigami.Theme.fixedWidthFont.family
-                placeholderText: i18n("Enter input…")
+                font.family: UI.Theme.fixedWidthFont.family
+                placeholderText: qsTr("Enter input…")
                 leftPadding: 8
                 rightPadding: 8
                 color: hashTab.textColor
@@ -182,7 +183,7 @@ Item {
 
             Button {
                 id: hashRunButton
-                text: hashSpinner.visible ? "" : i18n("Get Hash")
+                text: hashSpinner.visible ? "" : qsTr("Get Hash")
                 implicitHeight: 28
                 enabled: hashInputField.text.trim() !== "" && !hashTab.isProbingHash
                 font.pixelSize: hashTab.fpx(9)
@@ -203,7 +204,7 @@ Item {
                 contentItem: RowLayout {
                     anchors.centerIn: parent
                     spacing: 6
-                    Kirigami.Icon {
+                    UI.Icon {
                         id: hashSpinner
                         source: Qt.resolvedUrl("nixos-logo.svg")
                         isMask: hashTab.iconStyle !== "colored"
@@ -218,7 +219,7 @@ Item {
                         implicitWidth: 14
                         implicitHeight: 14
                         RotationAnimation on rotation {
-                            running: hashSpinner.visible && hashTab.uiActive
+                            running: hashSpinner.visible && hashTab.uiActive && hashTab.enableMotion
                             from: 0
                             to: 360
                             duration: 1200
@@ -240,13 +241,13 @@ Item {
         // ── Result field ──────────────────────────────────────────
         Rectangle {
             Layout.fillWidth: true
-            height: hashResultField.text !== "" ? hashResultRow.implicitHeight + 16 : 0
+            implicitHeight: hashResultField.text !== "" ? hashResultRow.implicitHeight + 16 : 0
             clip: true
             radius: 5
             color: hashResultField.isError ? Qt.rgba(1, 0.2, 0.2, 0.12) : Qt.rgba(0.2, 0.85, 0.2, 0.09)
             border.color: hashResultField.isError ? "#ff5555" : "#55cc55"
             border.width: 1
-            Behavior on height {
+            Behavior on implicitHeight {
                 NumberAnimation {
                     duration: 180
                 }
@@ -271,7 +272,7 @@ Item {
                     readOnly: true
                     wrapMode: Text.WrapAnywhere
                     font.pixelSize: hashTab.fpx(9)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: UI.Theme.fixedWidthFont.family
                     color: isError ? "#ff7777" : "#88ff88"
                     selectByMouse: true
                     // Make selection visible
@@ -283,7 +284,7 @@ Item {
                     icon.name: "edit-copy"
                     implicitWidth: 22
                     implicitHeight: 22
-                    ToolTip.text: i18n("Copy hash")
+                    ToolTip.text: qsTr("Copy hash")
                     ToolTip.visible: hovered
                     ToolTip.delay: 400
                     onClicked: hashTab.copyToClipboard(hashResultField.text)
@@ -298,7 +299,7 @@ Item {
             spacing: 8
 
             Text {
-                text: i18n("As SRI:")
+                text: qsTr("As SRI:")
                 color: hashTab.textColor
                 opacity: 0.5
                 font.pixelSize: hashTab.fpx(8)
@@ -310,7 +311,7 @@ Item {
                 selectByMouse: true
                 text: hashResultField.text !== "" && !hashResultField.isError ? "sha256-" + Qt.btoa(hashResultField.text.replace(/([0-9a-f]{2})/gi, (m, h) => String.fromCharCode(parseInt(h, 16)))) : ""
                 font.pixelSize: hashTab.fpx(8)
-                font.family: Kirigami.Theme.fixedWidthFont.family
+                font.family: UI.Theme.fixedWidthFont.family
                 color: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.85)
                 Layout.fillWidth: true
                 wrapMode: Text.WrapAnywhere
@@ -321,7 +322,7 @@ Item {
                 icon.name: "edit-copy"
                 implicitWidth: 22
                 implicitHeight: 22
-                ToolTip.text: i18n("Copy SRI hash")
+                ToolTip.text: qsTr("Copy SRI hash")
                 ToolTip.visible: hovered
                 ToolTip.delay: 400
                 onClicked: hashTab.copyToClipboard(sriField.text)
@@ -335,7 +336,7 @@ Item {
             visible: hashResultField.text !== "" && !hashResultField.isError
 
             Text {
-                text: i18n("Nix snippet:")
+                text: qsTr("Nix snippet:")
                 color: hashTab.textColor
                 opacity: 0.45
                 font.pixelSize: hashTab.fpx(8)
@@ -343,7 +344,7 @@ Item {
 
             Rectangle {
                 Layout.fillWidth: true
-                height: snippetEdit.implicitHeight + 12
+                implicitHeight: snippetEdit.implicitHeight + 12
                 radius: 4
                 color: Qt.rgba(0, 0, 0, 0.22)
                 border.color: Qt.rgba(1, 1, 1, 0.07)
@@ -363,7 +364,7 @@ Item {
                         selectByMouse: true
                         wrapMode: Text.WrapAnywhere
                         font.pixelSize: hashTab.fpx(8)
-                        font.family: Kirigami.Theme.fixedWidthFont.family
+                        font.family: UI.Theme.fixedWidthFont.family
                         color: hashTab.textColor
                         opacity: 0.85
                         selectionColor: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.35)
@@ -397,7 +398,7 @@ Item {
                         implicitWidth: 22
                         implicitHeight: 22
                         Layout.alignment: Qt.AlignTop
-                        ToolTip.text: i18n("Copy snippet")
+                        ToolTip.text: qsTr("Copy snippet")
                         ToolTip.visible: hovered
                         ToolTip.delay: 400
                         onClicked: hashTab.copyToClipboard(snippetEdit.text)
@@ -411,7 +412,7 @@ Item {
         }
 
         Text {
-            text: i18n("nix-prefetch-url must be available on PATH. GitHub mode fetches the archive tarball.")
+            text: qsTr("nix-prefetch-url must be available on PATH. GitHub mode fetches the archive tarball.")
             color: hashTab.textColor
             opacity: 0.28
             font.pixelSize: hashTab.fpx(8)

@@ -82,10 +82,10 @@
 
         <!-- Appearance -->
         <entry name="timelineColor" type="Color">
-            <default>#9b5de5</default>
+            <default>#71849b</default>
         </entry>
         <entry name="accentColor" type="Color">
-            <default>#b388ff</default>
+            <default>#91bcff</default>
         </entry>
         <entry name="fontScale" type="Double">
             <default>1.0</default>
@@ -94,7 +94,7 @@
             <default>true</default>
         </entry>
         <entry name="bgColor" type="String">
-            <default>#800a0c14</default>
+            <default>#f5131923</default>
         </entry>
         <entry name="bgRadius" type="Double">
             <default>14.0</default>
@@ -132,13 +132,14 @@
 
         <!-- Remembered popup size -->
         <entry name="popupWidth" type="Int">
-            <default>520</default>
+            <default>600</default>
         </entry>
         <entry name="popupHeight" type="Int">
-            <default>680</default>
+            <default>740</default>
         </entry>
         <entry name="gcCustomCommand" type="String">
             <default></default>
         </entry>
+        <entry name="enableMotion" type="Bool"><default>true</default></entry>
     </group>
 </kcfg>

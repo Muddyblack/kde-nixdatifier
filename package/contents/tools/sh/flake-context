@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -eu
+flake_dir="${1:-}"
+[[ "$flake_dir" != "~" && "$flake_dir" != "~/"* ]] || flake_dir="$HOME${flake_dir:1}"
+if [[ -z "$flake_dir" ]]; then
+    for candidate in /etc/nixos "$HOME/nixos-config" "${XDG_CONFIG_HOME:-$HOME/.config}/nixos"; do
+        if [[ -f "$candidate/flake.nix" ]]; then flake_dir="$candidate"; break; fi
+    done
+fi
+[[ -n "$flake_dir" && -d "$flake_dir" ]] || exit 0
+realpath "$flake_dir"
+if [[ -f "$flake_dir/flake.lock" ]]; then sha256sum "$flake_dir/flake.lock" | cut -d' ' -f1; fi

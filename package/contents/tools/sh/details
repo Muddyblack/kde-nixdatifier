@@ -5,6 +5,7 @@
 #   [1] kernel symlink target
 #   [2] diff-closures output
 #   [3] closure size in bytes (raw integer; "" if unavailable)
+set -o pipefail
 link="$1"
 base="$2"
 export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
@@ -12,8 +13,8 @@ cat "$link/nixos-version" 2>/dev/null
 printf '\x1e'
 readlink -f "$link/kernel" 2>/dev/null
 printf '\x1e'
-nix --extra-experimental-features 'nix-command flakes' store diff-closures "$base" "$link" 2>/dev/null \
-  | sed 's/\x1b\[[0-9;]*[mGKHF]//g'
+nix --extra-experimental-features 'nix-command flakes' store diff-closures "$base" "$link" \
+  | sed 's/\x1b\[[0-9;]*[mGKHF]//g' || exit $?
 printf '\x1e'
 # Closure size for this generation. `-S` (closure size) walks the full reference
 # graph; result is in bytes. Cached internally by Nix so subsequent calls are cheap.

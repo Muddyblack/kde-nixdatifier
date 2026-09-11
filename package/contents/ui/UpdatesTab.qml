@@ -1,14 +1,16 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import QtQuick.Layouts
+import "shared" as UI
+import "components"
 
 Item {
-    id: updatesTab
-
-    // ── Required properties ───────────────────────────────────────────────────
-    // See FullView.uiActive — false while the popup is closed.
+    id: root
+    property bool enableGlow: true
+    property var storePathCache: ({})
+    signal storePathRequested(var pkg)
     property bool uiActive: true
+    required property string activeViewMode
     required property color accentColor
     required property color textColor
     required property real fs
@@ -18,466 +20,273 @@ Item {
     required property var dryRunCache
     required property bool isDryRunning
     required property string iconStyle
-    required property string activeViewMode
-
-    function svg(name) {
-        return Qt.resolvedUrl("assets/" + name + ".svg");
-    }
-    function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * Kirigami.Theme.smallFont.pixelSize * fs));
-    }
-
+    property bool isBusy: false
+    property var iconCache: ({})
+    property var metaCache: ({})
+    property bool showPackageIcons: true
+    property var openPreviews: ({})
     signal dryRunRequested(string inputName, string overrideRef)
-    signal dryRunCacheCleared(string inputName)
     signal updateInputRequested(string inputName)
-
-    anchors.fill: parent
+    signal checkRequested
+    signal copyToClipboard(string text)
     visible: activeViewMode === "updates"
-
-    ColumnLayout {
+    property string updatingInput: ""
+    function togglePreview(input) {
+        if (!openPreviews[input.input] && !dryRunCache[input.input] && isDryRunning)
+            return;
+        const next = Object.assign({}, openPreviews);
+        next[input.input] = !next[input.input];
+        openPreviews = next;
+        if (next[input.input] && !dryRunCache[input.input])
+            dryRunRequested(input.input, input.overrideRef);
+    }
+    ScrollView {
+        id: scroll
+        objectName: "updatesScroll"
         anchors.fill: parent
-        spacing: 8
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-            Kirigami.Icon {
-                source: updatesTab.svg("ic_updates")
-                isMask: true
-                implicitWidth: 18
-                implicitHeight: 18
-                color: "#cc88ff"
-            }
-            Text {
-                text: updatesTab.isCheckingFlake ? i18n("Checking flake updates…") : (updatesTab.flakeUpdates.length > 0 ? (updatesTab.flakeUpdates.length === 1 ? i18n("1 flake update available") : i18n("%1 flake updates available").arg(updatesTab.flakeUpdates.length)) : (updatesTab.lastFlakeCheckTime !== "" ? i18n("All inputs up-to-date · %1").arg(updatesTab.lastFlakeCheckTime) : i18n("Flake up-to-date")))
-                color: updatesTab.flakeUpdates.length > 0 ? "#cc88ff" : Qt.rgba(updatesTab.textColor.r, updatesTab.textColor.g, updatesTab.textColor.b, 0.5)
-                font.pixelSize: updatesTab.fpx(11)
-                font.bold: true
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 300
-                    }
-                }
-            }
-            Item {
+        clip: true
+        contentWidth: availableWidth
+        ColumnLayout {
+            width: scroll.availableWidth
+            spacing: 0
+            RowLayout {
+                objectName: "updatesHeader"
                 Layout.fillWidth: true
-            }
-            Kirigami.Icon {
-                id: updateSpinner
-                source: Qt.resolvedUrl("nixos-logo.svg")
-                isMask: updatesTab.iconStyle !== "colored"
-                color: {
-                    if (updatesTab.iconStyle === "white")
-                        return "#ffffff";
-                    if (updatesTab.iconStyle === "black")
-                        return "#000000";
-                    return updatesTab.accentColor;
+                Layout.bottomMargin: 12
+                spacing: 9
+                Text {
+                    text: qsTr("Flake updates")
+                    color: root.textColor
+                    font.pixelSize: 12 * root.fs
+                    font.weight: Font.Medium
                 }
-                visible: updatesTab.isCheckingFlake
-                implicitWidth: 18
-                implicitHeight: 18
-                RotationAnimation on rotation {
-                    running: updateSpinner.visible && updatesTab.uiActive
-                    from: 0
-                    to: 360
-                    duration: 1400
-                    loops: Animation.Infinite
-                }
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            height: 1
-            color: Qt.rgba(1, 1, 1, 0.08)
-        }
-
-        ListView {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            spacing: 6
-            model: updatesTab.flakeUpdates
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
-            }
-
-            Text {
-                anchors.centerIn: parent
-                visible: updatesTab.flakeUpdates.length === 0 && !updatesTab.isCheckingFlake
-                text: i18n("No pending flake updates")
-                color: updatesTab.textColor
-                font.pixelSize: updatesTab.fpx(10)
-                opacity: 0.35
-            }
-
-            delegate: ColumnLayout {
-                width: parent ? parent.width : 0
-                spacing: 0
-
-                // ── Main row ──────────────────────────────────────
-                Rectangle {
+                Text {
                     Layout.fillWidth: true
-                    height: 44
-                    radius: 6
-                    color: rowMa.containsMouse ? Qt.rgba(0.7, 0.4, 1, 0.10) : Qt.rgba(0.7, 0.4, 1, 0.05)
-                    border.color: Qt.rgba(0.7, 0.4, 1, 0.22)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 120
-                        }
+                    text: root.flakeUpdates.length === 1 ? qsTr("1 input") : qsTr("%1 inputs").arg(root.flakeUpdates.length)
+                    color: "#8e9eb3"
+                    font.pixelSize: 9 * root.fs
+                    elide: Text.ElideRight
+                }
+                Text {
+                    visible: root.lastFlakeCheckTime !== ""
+                    text: root.width >= 440 * root.fs ? qsTr("Checked %1").arg(root.lastFlakeCheckTime) : root.lastFlakeCheckTime
+                    color: "#7f8ba0"
+                    font.pixelSize: 9 * root.fs
+                    HoverHandler {
+                        id: checkTimeHover
                     }
-
-                    MouseArea {
-                        id: rowMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        readonly property bool isSafeUrl: !!modelData.url && /^https?:\/\//i.test(modelData.url)
-                        cursorShape: isSafeUrl ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: if (isSafeUrl)
-                            Qt.openUrlExternally(modelData.url)
-                        ToolTip.text: modelData.url || ""
-                        ToolTip.visible: containsMouse && isSafeUrl
-                        ToolTip.delay: 500
-                    }
-
-                    Rectangle {
-                        anchors {
-                            left: parent.left
-                            top: parent.top
-                            bottom: parent.bottom
-                            leftMargin: 1
-                            topMargin: 1
-                            bottomMargin: 1
-                        }
-                        width: 3
-                        radius: 1
-                        color: "#cc88ff"
-                    }
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 12
-                        anchors.rightMargin: 8
-                        spacing: 10
-
-                        Kirigami.Icon {
-                            source: updatesTab.svg("ic_package_added")
-                            isMask: true
-                            implicitWidth: 16
-                            implicitHeight: 16
-                            color: "#cc88ff"
-                        }
-
-                        Column {
+                    ToolTip.visible: checkTimeHover.hovered
+                    ToolTip.text: qsTr("Last checked at %1").arg(root.lastFlakeCheckTime)
+                }
+                UI.ActionButton {
+                    text: qsTr("Check")
+                    glyph: "view-refresh"
+                    implicitHeight: 29 * root.fs
+                    font.pixelSize: 10 * root.fs
+                    enabled: !root.isCheckingFlake && !root.isBusy
+                    onClicked: root.checkRequested()
+                }
+            }
+            Repeater {
+                model: root.flakeUpdates
+                Rectangle {
+                    id: card
+                    required property var modelData
+                    readonly property var entry: root.dryRunCache[modelData.input] || null
+                    readonly property bool opened: !!root.openPreviews[modelData.input]
+                    readonly property bool updating: root.updatingInput === modelData.input
+                    Layout.fillWidth: true
+                    Layout.bottomMargin: 9
+                    implicitHeight: contents.implicitHeight + 20
+                    radius: 9
+                    color: "#03ffffff"
+                    border.color: "#0effffff"
+                    ColumnLayout {
+                        id: contents
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 10
+                        spacing: 0
+                        RowLayout {
                             Layout.fillWidth: true
-                            spacing: 2
-                            Text {
-                                text: modelData.input
-                                color: updatesTab.textColor
-                                font.pixelSize: updatesTab.fpx(11)
-                                font.bold: true
-                            }
-                            RowLayout {
-                                spacing: 6
-                                Text {
-                                    text: modelData.oldRev
-                                    color: updatesTab.textColor
-                                    font.pixelSize: updatesTab.fpx(8)
-                                    opacity: 0.5
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                }
-                                Text {
-                                    text: "→"
-                                    color: "#cc88ff"
-                                    font.pixelSize: updatesTab.fpx(8)
-                                }
-                                Text {
-                                    text: modelData.newRev
-                                    color: "#cc88ff"
-                                    font.pixelSize: updatesTab.fpx(8)
-                                    font.bold: true
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                }
-                                Text {
-                                    visible: modelData.oldDate !== ""
-                                    text: "·  " + modelData.oldDate
-                                    color: updatesTab.textColor
-                                    font.pixelSize: updatesTab.fpx(8)
-                                    opacity: 0.4
-                                }
-                            }
-                        }
-
-                        // ── "Preview changes" button ──────────────
-                        Rectangle {
-                            id: previewBtn
-                            visible: !!modelData.overrideRef
-                            readonly property var drEntry: updatesTab.dryRunCache[modelData.input] || null
-                            readonly property bool isLoading: drEntry && drEntry.status === "loading"
-                            readonly property bool isDone: drEntry && drEntry.status === "ok"
-                            readonly property bool isError: drEntry && drEntry.status === "error"
-                            readonly property bool isExpanded: isDone || isError
-
-                            width: 22
-                            height: 22
-                            radius: 5
-                            color: previewMa.containsMouse ? Qt.rgba(0.7, 0.4, 1, 0.30) : Qt.rgba(0.7, 0.4, 1, 0.12)
-                            border.color: Qt.rgba(0.7, 0.4, 1, isExpanded ? 0.70 : 0.45)
-                            border.width: 1
-                            Behavior on color {
-                                ColorAnimation {
-                                    duration: 100
-                                }
-                            }
-
-                            Kirigami.Icon {
-                                anchors.centerIn: parent
-                                source: previewBtn.isLoading ? updatesTab.svg("ic_refresh") : updatesTab.svg("ic_diff")
-                                isMask: true
-                                implicitWidth: 12
-                                implicitHeight: 12
-                                color: "#cc88ff"
-                                RotationAnimation on rotation {
-                                    running: previewBtn.isLoading && updatesTab.uiActive
-                                    from: 0
-                                    to: 360
-                                    duration: 1000
-                                    loops: Animation.Infinite
-                                }
-                            }
-
-                            MouseArea {
-                                id: previewMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: !previewBtn.isLoading && !updatesTab.isDryRunning
-                                onClicked: {
-                                    // Toggle: if already expanded clear the cache entry so it collapses
-                                    if (previewBtn.isExpanded) {
-                                        updatesTab.dryRunCacheCleared(modelData.input);
-                                    } else {
-                                        updatesTab.dryRunRequested(modelData.input, modelData.overrideRef);
+                            spacing: 8
+                            Item {
+                                Layout.fillWidth: true
+                                implicitHeight: 38
+                                RowLayout {
+                                    anchors.fill: parent
+                                    spacing: 10
+                                    Rectangle {
+                                        implicitWidth: 31
+                                        implicitHeight: 31
+                                        radius: 8
+                                        color: "#04ffffff"
+                                        border.color: "#0effffff"
+                                        UI.Icon {
+                                            anchors.centerIn: parent
+                                            source: Qt.resolvedUrl(card.modelData.input.indexOf("home") >= 0 ? "assets/ic_folder.svg" : "assets/ic_outline_box.svg")
+                                            width: 17
+                                            height: 17
+                                            isMask: true
+                                            color: "#93a5be"
+                                        }
+                                    }
+                                    ColumnLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 5
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: card.modelData.input
+                                            color: root.textColor
+                                            font.pixelSize: 11 * root.fs
+                                            font.weight: Font.Medium
+                                            elide: Text.ElideRight
+                                        }
+                                        RowLayout {
+                                            Layout.fillWidth: true
+                                            spacing: 5
+                                            visible: !card.updating
+                                            Text {
+                                                Layout.maximumWidth: 70 * root.fs
+                                                text: card.modelData.oldRev
+                                                color: "#8293ab"
+                                                font.family: UI.Theme.fixedWidthFont.family
+                                                font.pixelSize: 9 * root.fs
+                                                elide: Text.ElideRight
+                                            }
+                                            Text {
+                                                text: "→"
+                                                color: "#8293ab"
+                                                font.pixelSize: 10 * root.fs
+                                            }
+                                            Text {
+                                                Layout.fillWidth: true
+                                                text: card.modelData.newRev
+                                                color: root.accentColor
+                                                font.family: UI.Theme.fixedWidthFont.family
+                                                font.pixelSize: 9 * root.fs
+                                                elide: Text.ElideRight
+                                            }
+                                        }
+                                        Text {
+                                            visible: card.updating
+                                            text: qsTr("Updating input…")
+                                            color: UI.Theme.positive
+                                            font.pixelSize: 9 * root.fs
+                                        }
                                     }
                                 }
-                                ToolTip.text: previewBtn.isExpanded ? i18n("Hide preview") : (previewBtn.isLoading ? i18n("Evaluating… (this may take a moment)") : i18n("Preview packages that would change"))
-                                ToolTip.visible: containsMouse
-                                ToolTip.delay: 400
-                            }
-                        }
-
-                        // ── "Update this input" button ────────────
-                        Rectangle {
-                            id: updateBtn
-                            width: 22
-                            height: 22
-                            radius: 5
-                            color: updateMa.containsMouse ? Qt.rgba(0.2, 0.8, 0.4, 0.30) : Qt.rgba(0.2, 0.8, 0.4, 0.12)
-                            border.color: Qt.rgba(0.2, 0.8, 0.4, 0.45)
-                            border.width: 1
-                            Behavior on color {
-                                ColorAnimation {
-                                    duration: 100
+                                MouseArea {
+                                    anchors.fill: parent
+                                    enabled: !!card.modelData.overrideRef
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: root.togglePreview(card.modelData)
                                 }
                             }
-
-                            Kirigami.Icon {
-                                anchors.centerIn: parent
-                                source: updatesTab.svg("ic_refresh")
-                                isMask: true
-                                implicitWidth: 12
-                                implicitHeight: 12
-                                color: "#55cc88"
-                            }
-
-                            MouseArea {
-                                id: updateMa
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: updatesTab.updateInputRequested(modelData.input)
-                                ToolTip.text: i18n("Update only '%1' in lock file").arg(modelData.input)
-                                ToolTip.visible: containsMouse
-                                ToolTip.delay: 400
-                            }
-                        }
-
-                        Text {
-                            visible: !!(modelData.url)
-                            text: "↗"
-                            color: "#cc88ff"
-                            opacity: rowMa.containsMouse ? 0.95 : 0.55
-                            font.pixelSize: updatesTab.fpx(13)
-                            font.bold: true
-                            Behavior on opacity {
-                                NumberAnimation {
-                                    duration: 120
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // ── Expanded dry-run results ───────────────────────
-                Rectangle {
-                    id: drPanel
-                    property var drEntry: updatesTab.dryRunCache[modelData.input] || null
-                    property bool show: drEntry && (drEntry.status === "ok" || drEntry.status === "error")
-                    property var pkgs: (drEntry && drEntry.packages) ? drEntry.packages : []
-                    property bool hasError: drEntry && drEntry.status === "error"
-                    property bool isEmpty: drEntry && drEntry.status === "ok" && pkgs.length === 0
-
-                    // Row height must stay in sync with the delegate's fixed height below.
-                    readonly property int rowH: 20
-                    // Cap visible rows at 8 so the ListView can virtualize anything beyond that.
-                    readonly property int listH: Math.min(pkgs.length * rowH, 8 * rowH)
-
-                    Layout.fillWidth: true
-                    visible: show
-                    height: show ? (hasError || isEmpty ? 36 : listH + 16) : 0
-                    radius: 6
-                    color: Qt.rgba(0.7, 0.4, 1, 0.05)
-                    border.color: Qt.rgba(0.7, 0.4, 1, 0.15)
-                    border.width: 1
-                    clip: true
-
-                    Behavior on height {
-                        NumberAnimation {
-                            duration: 180
-                            easing.type: Easing.OutCubic
-                        }
-                    }
-
-                    // Error state
-                    Text {
-                        anchors {
-                            left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            margins: 8
-                        }
-                        visible: drPanel.hasError
-                        text: "⚠  " + (drPanel.drEntry ? (drPanel.drEntry.errorMsg || i18n("Evaluation failed")) : "")
-                        color: "#ff6666"
-                        font.pixelSize: updatesTab.fpx(8.5)
-                        wrapMode: Text.WordWrap
-                    }
-
-                    // Empty / up-to-date state
-                    Text {
-                        anchors {
-                            left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            margins: 8
-                        }
-                        visible: drPanel.isEmpty
-                        text: i18n("No package changes — everything is already up to date.")
-                        color: updatesTab.textColor
-                        opacity: 0.5
-                        font.pixelSize: updatesTab.fpx(8.5)
-                    }
-
-                    // Package list — virtualized ListView replaces the old Repeater so only
-                    // visible rows are instantiated, avoiding a main-thread freeze on large lists.
-                    ListView {
-                        anchors {
-                            left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            margins: 8
-                        }
-                        height: drPanel.listH
-                        visible: !drPanel.hasError && !drPanel.isEmpty
-                        model: drPanel.pkgs
-                        clip: true
-                        spacing: 3
-                        cacheBuffer: drPanel.rowH * 2
-                        ScrollBar.vertical: ScrollBar {
-                            policy: ScrollBar.AsNeeded
-                        }
-
-                        delegate: RowLayout {
-                            width: ListView.view.width
-                            height: drPanel.rowH
-                            spacing: 6
-
-                            // Build/fetch badge
-                            Rectangle {
-                                width: 32
-                                height: 13
-                                radius: 3
-                                color: modelData.action === "build" ? Qt.rgba(1, 0.6, 0.2, 0.18) : Qt.rgba(0.3, 0.8, 0.5, 0.14)
-                                border.color: modelData.action === "build" ? Qt.rgba(1, 0.6, 0.2, 0.45) : Qt.rgba(0.3, 0.8, 0.5, 0.40)
-                                border.width: 1
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: modelData.action === "build" ? "build" : "dl"
-                                    color: modelData.action === "build" ? "#ffaa44" : "#55cc88"
-                                    font.pixelSize: updatesTab.fpx(6.5)
-                                    font.bold: true
-                                }
-                            }
-
-                            Text {
-                                text: modelData.name
-                                color: updatesTab.textColor
-                                font.pixelSize: updatesTab.fpx(9)
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                            }
-
-                            // Version change
                             RowLayout {
-                                spacing: 4
-                                Text {
-                                    visible: modelData.oldVersion !== ""
-                                    text: modelData.oldVersion
-                                    color: updatesTab.textColor
-                                    opacity: 0.45
-                                    font.pixelSize: updatesTab.fpx(8)
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                spacing: 5
+                                UI.ActionButton {
+                                    objectName: "preview-" + card.modelData.input
+                                    glyph: Qt.resolvedUrl(card.opened ? "assets/ic_chevron_up.svg" : "assets/ic_outline_compare.svg")
+                                    implicitHeight: 27
+                                    primary: true
+                                    accent: "#b6a1e4"
+                                    tip: card.opened ? qsTr("Collapse preview") : card.entry ? qsTr("Show cached preview") : qsTr("Preview package changes")
+                                    enabled: !!card.modelData.overrideRef && (card.opened || !!card.entry || !root.isDryRunning)
+                                    onClicked: root.togglePreview(card.modelData)
                                 }
-                                Text {
-                                    visible: modelData.oldVersion !== "" && modelData.newVersion !== ""
-                                    text: "→"
-                                    color: "#cc88ff"
-                                    font.pixelSize: updatesTab.fpx(8)
+                                UI.ActionButton {
+                                    objectName: "update-" + card.modelData.input
+                                    glyph: "view-refresh"
+                                    implicitHeight: 27
+                                    tip: qsTr("Update only %1").arg(card.modelData.input)
+                                    accent: UI.Theme.positive
+                                    primary: true
+                                    enabled: !root.isBusy
+                                    onClicked: root.updateInputRequested(card.modelData.input)
                                 }
-                                Text {
-                                    visible: modelData.newVersion !== ""
-                                    text: modelData.newVersion
-                                    color: "#cc88ff"
-                                    font.pixelSize: updatesTab.fpx(8)
-                                    font.bold: true
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                UI.ActionButton {
+                                    objectName: "source-" + card.modelData.input
+                                    glyph: "go-up-right"
+                                    implicitHeight: 27
+                                    tip: qsTr("Open source repository")
+                                    enabled: /^https?:\/\//i.test(card.modelData.url || "")
+                                    onClicked: Qt.openUrlExternally(card.modelData.url)
                                 }
-                                Text {
-                                    visible: modelData.oldVersion === "" && modelData.newVersion !== ""
-                                    text: "+ " + modelData.newVersion
-                                    color: "#55cc88"
-                                    font.pixelSize: updatesTab.fpx(8)
-                                    font.bold: true
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                }
+                            }
+                        }
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            Layout.topMargin: visible ? 10 : 0
+                            visible: card.opened
+                            spacing: 10
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                color: "#08ffffff"
+                            }
+                            Text {
+                                visible: !!card.entry && card.entry.status === "loading"
+                                text: qsTr("Evaluating package changes…")
+                                color: root.accentColor
+                                font.pixelSize: 10 * root.fs
+                            }
+                            UI.ActionButton {
+                                visible: !card.entry
+                                text: qsTr("Preview changes")
+                                enabled: !root.isDryRunning
+                                onClicked: root.dryRunRequested(card.modelData.input, card.modelData.overrideRef)
+                            }
+                            Text {
+                                visible: !!card.entry && card.entry.status === "error"
+                                Layout.fillWidth: true
+                                wrapMode: Text.WrapAnywhere
+                                text: card.entry ? card.entry.errorMsg || "" : ""
+                                color: UI.Theme.negative
+                                font.pixelSize: 10 * root.fs
+                            }
+                            UI.ActionButton {
+                                visible: !!card.entry && card.entry.status === "error"
+                                text: qsTr("Retry preview")
+                                enabled: !root.isDryRunning
+                                onClicked: root.dryRunRequested(card.modelData.input, card.modelData.overrideRef)
+                            }
+                            PackageList {
+                                storePathCache: root.storePathCache
+                                onStorePathRequested: pkg => root.storePathRequested(pkg)
+                                visible: !!card.entry && card.entry.status === "ok"
+                                Layout.fillWidth: true
+                                packages: card.entry ? card.entry.packages || [] : []
+                                iconCache: root.iconCache
+                                metaCache: root.metaCache
+                                fs: root.fs
+                                textColor: root.textColor
+                                accentColor: root.accentColor
+                                showPackageIcons: root.showPackageIcons
+                                enableGlow: root.enableGlow
+                                onCopyToClipboard: text => root.copyToClipboard(text)
+                            }
+                            UI.ActionButton {
+                                text: qsTr("Collapse preview")
+                                flatStyle: true
+                                onClicked: root.togglePreview(card.modelData)
                             }
                         }
                     }
                 }
             }
-        }
-
-        Text {
-            visible: updatesTab.flakeUpdates.length > 0
-            text: i18n("Run 'nix flake update' in your config directory to apply.")
-            color: updatesTab.textColor
-            font.pixelSize: updatesTab.fpx(8)
-            opacity: 0.38
-            horizontalAlignment: Text.AlignHCenter
-            Layout.fillWidth: true
-            wrapMode: Text.WordWrap
+            Text {
+                visible: !root.flakeUpdates.length
+                Layout.fillWidth: true
+                Layout.topMargin: 25
+                Layout.bottomMargin: 25
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: root.isCheckingFlake ? qsTr("Checking upstream inputs…") : root.lastFlakeCheckTime ? qsTr("No pending input updates.") : qsTr("Configure a flake directory or check for updates.")
+                color: "#91a4bd"
+                font.pixelSize: 11 * root.fs
+            }
         }
     }
 }

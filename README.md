@@ -41,13 +41,34 @@ A KDE Plasma 6 widget for NixOS to view system generations, package diffs, flake
 
 ---
 
+## Shared UI for Plasma and Hyprland
+
+The redesign uses one QML application for both desktops: Generations, Updates,
+Compare, and Tools. It retains the original flake artwork, animated generation
+rail, expandable package changes, full settings, and existing generation actions.
+Work status uses the existing footer and its animated bottom edge. Action feedback
+stays in a small footer indicator with details on click, without covering controls.
+
+- **Plasma:** the existing plugin ID and settings remain compatible. Preview with
+  `make view`; the default flake package still installs the plasmoid.
+- **Hyprland:** run `nix run path:.#hyprland` from this checkout. The new package
+  includes the Quickshell popup, configurable edge pill, and standard tray entry.
+  Add the installed `nixdatifier-hyprland` executable to Hyprland's `exec-once`.
+- **Checks:** `make test` runs isolated QML and helper tests. It does not switch
+  generations, update your flake, or collect garbage.
+
+See [the implementation notes](docs/REDESIGN.md) for settings locations, IPC,
+shared caches, development commands, and validation limits. The reviewed
+[design brief](UI-REWRITE-PLAN.md) and HTML preview remain available.
+
+
 ## Features
 
 - **Timeline** — Active, historical, and next-boot system generations.
 - **Package Diff** — Lists package additions, upgrades, and removals between generations using `nix store diff-closures`.
 - **Rollback & Boot Control** — Switch generations, set next-boot target, or delete generations (uses Polkit/`pkexec`).
 - **Flake Updates** — Track pending package updates from upstream nixpkgs.
-- **Custom Commands** — Pin up to 4 terminal commands (e.g., `nixos-rebuild`) to the widget header.
+- **Custom Commands** — Keep up to 4 terminal commands (e.g., `nixos-rebuild`) in the footer Commands panel.
 - **Secrets Viewer** — Inspect active age(nix) or sops-nix secrets and decryption paths.
 - **Customization** — Change layout, background blur, opacity, colors, and fonts.
 
@@ -204,7 +225,7 @@ All settings are available via the widget's right-click → Configure menu:
 | **Max Generations** | Integer | `10` | Max generations to display in the timeline |
 | **Default View** | String | `"timeline"` | Active tab on startup (`timeline` / `updates` / `secrets` / `diff` / `hash`) |
 | **Custom Commands** | String | *See below* | JSON array representing pinned terminal command actions (max 4) |
-| **Show Command Buttons** | Boolean | `true` | Toggle custom command actions visibility in the header |
+| **Show Command Buttons** | Boolean | `true` | Toggle the footer Commands panel |
 | **Command Terminal** | String | `""` | Custom terminal emulator command wrapper (autodetects if empty) |
 | **Use Pkexec** | Boolean | `true` | Elevate generation switch/delete privileges using Polkit |
 | **Confirm Before Rollback** | Boolean | `true` | Display a verification popup dialog before activating a generation |
@@ -213,14 +234,14 @@ All settings are available via the widget's right-click → Configure menu:
 | **Show Notifications** | Boolean | `true` | Push desktop notification alerts when upstream flake updates are detected |
 | **Secrets Path** | String | `""` | Deployed secrets directory (defaults to `/run/secrets`) |
 | **Secrets Source Path** | String | `""` | Path to encrypted secrets source config (sops-nix/agenix) |
-| **Timeline Color** | Color | `#9b5de5` | Custom line and connector point hex color for the history list |
-| **Accent Color** | Color | `#b388ff` | Focus and highlight elements styling color |
-| **Background Card** | Boolean | `true` | Renders a frosted styling card under the widget content |
-| **Background Color** | Color | `#0a0c14` | Styling color for the widget container card |
-| **Background Opacity** | Double | `0.5` | Transparency level for the card background (0.0 to 1.0) |
+| **Timeline Color** | Color | `#71849b` | Custom line and connector point hex color for the history list |
+| **Accent Color** | Color | `#91bcff` | Focus and highlight elements styling color |
+| **Background Card** | Boolean | `true` | Draw the configurable translucent card; disable to use the Plasma theme background |
+| **Background Color** | String | `#f5131923` | Card color in `#AARRGGBB` format; the first pair sets opacity (e.g. `#80131923` for half opacity) |
 | **Background Radius** | Double | `14.0` | Rounded corner styling radius size for the container card |
 | **Custom Text Color** | Color | `#ffffff` | Overrides the system font color with a specific style hex |
-| **Enable Glow** | Boolean | `true` | Toggles neon shadow drop highlights on status dots and tabs |
+| **Enable Glow** | Boolean | `true` | Toggle timeline marker glow |
+| **Enable Motion** | Boolean | `true` | Animate the flake, footer loading edge, and green-to-amber timeline marker |
 | **Icon Style** | String | `"colored"` | System icon representation mode (`colored` / `white` / `black` / `accent`) |
 | **Diff View Mode** | String | `"compact"` | Output styling for Nix diffs (`compact` / `detailed`) |
 | **Show Package Icons** | Boolean | `true` | Query and display app icons in diff closure lists |

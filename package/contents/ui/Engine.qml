@@ -1,0 +1,1618 @@
+import QtQuick
+import QtQuick.Layouts
+import QtQuick.Controls
+import "shared" as UI
+
+import "components"
+
+Item {
+    id: root
+
+    readonly property string toolTipMainText: root.hostname !== "" ? root.hostname : "Nixdatifier"
+    readonly property string toolTipSubText: {
+        var lines = [];
+
+        if (root.activeGenNum > 0) {
+            var genLine = "Generation #" + root.activeGenNum;
+            if (root.bootedGenNum > 0 && root.bootedGenNum !== root.activeGenNum)
+                genLine += " (active) · Booted: #" + root.bootedGenNum;
+            lines.push(genLine);
+        }
+
+        if (root.nixosVersion !== "")
+            lines.push("NixOS " + root.nixosVersion);
+
+        var activeDetails = root.detailsCache[root.activeGenNum];
+        if (activeDetails && activeDetails.kernelVer)
+            lines.push("Kernel: " + activeDetails.kernelVer);
+
+        if (root.uptime !== "")
+            lines.push("Uptime: " + root.uptime);
+
+        if (root.flakeUpdates.length > 0) {
+            lines.push("");
+            lines.push(root.flakeUpdates.length === 1 ? "1 flake update available:" : root.flakeUpdates.length + " flake updates available:");
+            for (var i = 0; i < root.flakeUpdates.length; i++) {
+                var u = root.flakeUpdates[i];
+                lines.push("  • " + u.input + ": " + u.oldRev + " → " + u.newRev);
+            }
+        } else if (root.lastFlakeCheckTime !== "") {
+            lines.push("Flake: up to date");
+        }
+
+        if (root.isBusy)
+            lines.push("Status: Running action…");
+        else if (root.isLoadingGens)
+            lines.push("Status: Loading generations…");
+        else if (root.isCheckingFlake)
+            lines.push("Status: Checking flake updates…");
+        else if (root.isLoadingDetails)
+            lines.push("Status: Loading generation details…");
+        else if (root.isDryRunning)
+            lines.push("Status: Calculating update preview…");
+        else if (root.isProbingHash)
+            lines.push("Status: Calculating hash…");
+        else if (root.isLoadingSecrets)
+            lines.push("Status: Checking secrets…");
+
+        return lines.join("\n");
+    }
+
+    required property var settings
+    required property Component executor
+    property bool expanded: false
+    property bool pinned: false
+    property bool autoStart: true
+    property bool initialized: false
+    property int activeJobs: 0
+    signal configureRequested
+    readonly property string busyLabel: isBusy ? (currentActionType || qsTr("Running command…")) : isCheckingFlake ? qsTr("Checking flake inputs…") : isDryRunning ? qsTr("Previewing package changes…") : isLoadingDetails || isLoadingPairDiff ? qsTr("Loading package changes…") : isProbingHash ? qsTr("Calculating hash…") : isLoadingSecrets ? qsTr("Inspecting secrets…") : _diskProbeRunning ? qsTr("Measuring Nix store…") : countingChanges ? qsTr("Counting package changes…") : activeJobs > 0 ? qsTr("Refreshing system information…") : ""
+
+    // ── Script directory ──────────────────────────────────────────────────────
+    readonly property string scriptDir: Qt.resolvedUrl("../tools/sh/").toString().replace("file://", "")
+
+    // ── Theme / Config aliases ────────────────────────────────────────────────
+    readonly property color accentColor: root.settings.accentColor || UI.Theme.highlightColor
+    // Treat the previous default as the new neutral rail, preserving custom colors.
+    readonly property color timelineColor: !root.settings.timelineColor || Qt.colorEqual(root.settings.timelineColor, "#9b5de5") ? "#71849b" : root.settings.timelineColor
+    readonly property color textColor: !root.settings.useSystemTextColor ? (root.settings.customTextColor || "#ffffff") : root.settings.showBg ? UI.Theme.textOn(root.settings.bgColor || "#131923", UI.Theme.systemTextColor) : UI.Theme.systemTextColor
+    property string resolvedFlakePath: ""
+    property string lockFingerprint: ""
+    property int flakeEpoch: 0
+    readonly property string flakePath: root.resolvedFlakePath || (root.settings ? root.settings.flakePath : "") || ""
+    function refreshFlakeContext(callback) {
+        if (!root.settings)
+            return;
+        const requested = root.settings.flakePath;
+        sh(shq(root.scriptDir + "flake-context") + " " + shq(requested), function (cmd, out, err, code) {
+            if (requested !== root.settings.flakePath)
+                return;
+            const lines = (out || "").trim().split("\n");
+            const path = lines[0] || "", fingerprint = lines[1] || "";
+            const changed = path !== root.resolvedFlakePath || fingerprint !== root.lockFingerprint;
+            if (changed) {
+                root.flakeEpoch++;
+                root.dryRunCache = ({});
+                root.flakeUpdates = [];
+                root._lastFlakeCacheTs = 0;
+                root.resolvedFlakePath = path;
+                root.lockFingerprint = fingerprint;
+            }
+            if (callback)
+                callback(changed);
+        });
+    }
+    readonly property real fs: root.settings.fontScale || 1.0
+    readonly property var customCommands: {
+        try {
+            return JSON.parse(root.settings.customCommands || "[]");
+        } catch (e) {
+            return [];
+        }
+    }
+    // Empty string = auto-detect from KDE/XDG defaults in the terminal script
+    readonly property string terminalApp: root.settings.commandTerminal || ""
+    readonly property string iconStyle: root.settings.iconStyle || "colored"
+
+    // ── Generations state ─────────────────────────────────────────────────────
+    property var generations: []
+    property string activeStorePath: ""
+    property string bootedStorePath: ""
+    property int activeGenNum: -1
+    property int bootedGenNum: -1
+    property int selectedGenNum: -1
+    property bool isLoadingGens: false
+    property bool isLoadingDetails: false
+    property bool isBusy: false
+    property bool isProbingHash: false
+    property bool isLoadingSecrets: false
+    property bool isLoadingConfigDiff: false
+
+    // ── Active spinner state (panel spinner spins if any action or probe is running) ──
+    readonly property bool isSpinning: root.activeJobs > 0 || root._diskProbeRunning || root.isBusy || root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isLoadingSecrets || root.isLoadingConfigDiff
+
+    property var detailsCache: ({})
+    property string diffFilter: ""
+    property string diffMode: "prev"
+
+    // Cache of pairwise diffs for the Diff tab: key "A_B" -> { diff: [...] }
+    property var pairDiffCache: ({})
+    property bool isLoadingPairDiff: false
+
+    // Config-diff cache: key = genNum → { status, message, repo, commitA, commitB, diff }
+    property var configDiffCache: ({})
+    property int pairDiffA: -1
+    property int pairDiffB: -1
+
+    // Icon cache: pkgName -> icon string (system theme name or "")
+    property var iconCache: ({})
+
+    // Meta cache: pkgName -> { url, source }
+    //   source = "nixpkgs" | "plasmoid" | ""   ("" means we looked it up and
+    //   found nothing — used to suppress repeated lookups)
+    property var metaCache: ({})
+
+    // ── Action tracking (exposed to FullView for busy bar text) ───────────────
+    property string currentActionType: ""
+    property int currentActionGenNum: -1
+
+    // ── Flake state ───────────────────────────────────────────────────────────
+    property var flakeUpdates: []
+    property bool isCheckingFlake: false
+    property string lastFlakeCheckTime: ""
+
+    // Shell snippet that expands to the shared cache file path.
+    // All widget instances on the same machine read/write this file.
+    // Format: first line is a Unix timestamp (seconds); remaining lines are raw flake-probe TSV.
+    // Written by whichever instance runs the probe first; others just read it.
+    // Deliberately a shell expression, not a quoted path — evaluated inside sh() calls.
+    readonly property string flakeCacheName: "flake-" + Qt.md5(root.flakePath) + "-" + (root.lockFingerprint || "none")
+    readonly property string flakeCacheExpr: '"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier/' + root.flakeCacheName + '"'
+
+    // Unix timestamp of the cache snapshot currently applied to this instance.
+    // Used by the sync timer to detect when another instance wrote a newer result.
+    property int _lastFlakeCacheTs: 0
+
+    // ── Dry-run preview state ─────────────────────────────────────────────────
+    // key = input name, value = { status: "ok"|"error"|"loading", packages: [...] }
+    // package: { action, name, oldVersion, newVersion }
+    property var dryRunCache: ({})
+    property bool isDryRunning: false
+
+    // ── System info ───────────────────────────────────────────────────────────
+    property string hostname: ""
+    property string nixosVersion: ""
+    property string lastActivationTime: ""
+    property string uptime: ""
+
+    // ── Disk usage state ──────────────────────────────────────────────────────
+    // All values in bytes (0 = unknown).
+    property real diskStoreBytes: 0
+    property real diskReclaimableBytes: -1
+    property real diskFreeBytes: 0
+
+    // ── Secrets state ─────────────────────────────────────────────────────────
+    // deployedSecrets: live decrypted secrets (e.g. /run/secrets, auto-detected)
+    // sourceSecrets:   encrypted source file (e.g. secrets.yaml in the flake repo)
+    property var deployedSecrets: ({
+            path: "",
+            exists: false,
+            lastModified: "",
+            freshness: "",
+            fileCount: 0,
+            names: [],
+            encKind: "",
+            sopsVersion: "",
+            recipientCount: 0,
+            encType: ""
+        })
+    property var sourceSecrets: ({
+            path: "",
+            exists: false,
+            lastModified: "",
+            freshness: "",
+            fileCount: 0,
+            names: [],
+            encKind: "",
+            sopsVersion: "",
+            recipientCount: 0,
+            encType: ""
+        })
+
+    // Legacy alias so any remaining sopsStatus references still compile
+    property var sopsStatus: deployedSecrets
+
+    // ── Hash tool state ───────────────────────────────────────────────────────
+    property var hashResult: null   // { value: string, isError: bool } | null
+
+    // ── Pending confirmation ──────────────────────────────────────────────────
+    property int pendingGenNum: -1
+    property string pendingAction: ""
+    property string pendingCleanup: ""
+
+    // ── View state ────────────────────────────────────────────────────────────
+    property string activeViewMode: root.settings.defaultView || "timeline"
+
+    // ── Toast queue ───────────────────────────────────────────────────────────
+    property var toasts: []
+
+    function pushToast(message, isError) {
+        var arr = root.toasts.filter(t => t.err);
+        var existing = -1;
+        for (var i = 0; i < arr.length; i++) {
+            if (arr[i].msg === message) {
+                existing = i;
+                break;
+            }
+        }
+        if (existing >= 0) {
+            arr.splice(existing, 1);
+        }
+        arr.push({
+            msg: message,
+            err: isError || false,
+            id: Date.now()
+        });
+        root.toasts = arr;
+        toastTimer.restart();
+    }
+
+    Timer {
+        id: toastTimer
+        interval: 5000
+        repeat: false
+        onTriggered: {
+            var arr = root.toasts.slice();
+            for (var i = 0; i < arr.length; i++) {
+                if (!arr[i].err) {
+                    arr.splice(i, 1);
+                    break;
+                }
+            }
+            root.toasts = arr;
+            for (var j = 0; j < arr.length; j++) {
+                if (!arr[j].err) {
+                    restart();
+                    return;
+                }
+            }
+        }
+    }
+
+    TextEdit {
+        id: clipboardHelper
+        visible: false
+    }
+
+    function copyToClipboard(text) {
+        clipboardHelper.text = text;
+        clipboardHelper.selectAll();
+        clipboardHelper.copy();
+        root.pushToast(qsTr("Copied to clipboard"), false);
+    }
+
+    // Desktop notification — survives popup close. Respects user's preference.
+    // Uses notify-send (xdg-compatible) and an appropriate themed icon.
+    function notify(title, body, isError) {
+        if (!root.settings.showNotifications)
+            return;
+        const icon = isError ? "dialog-error" : "system-software-update";
+        sh("notify-send -i " + icon + " " + shq(title) + " " + shq(body), null);
+    }
+
+    // Human-readable byte formatter — used for closure size + disk usage chips.
+    function formatBytes(bytes) {
+        if (!bytes || bytes <= 0)
+            return "";
+        const units = ["B", "KB", "MB", "GB", "TB"];
+        let i = 0, v = bytes;
+        while (v >= 1024 && i < units.length - 1) {
+            v /= 1024;
+            i++;
+        }
+        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
+    }
+
+    // ── Shell helper ──────────────────────────────────────────────────────────
+    // Creates a fresh Shell.qml instance, runs cmd, calls cb(cmd,out,err,code), auto-cleans up.
+    //
+    // The Component itself is compiled once and reused: sh() is on the hot path
+    // (every probe, every refresh, every cache read), and Qt.createComponent()
+    // re-resolves and re-validates the URL on every call.
+    function sh(cmd, cb, mutation) {
+        if (!root.executor || root.executor.status !== Component.Ready) {
+            Qt.callLater(function () {
+                if (cb)
+                    cb(cmd, "", qsTr("Process adapter unavailable"), 127);
+            });
+            return;
+        }
+        const tracked = cmd.indexOf(root.scriptDir) >= 0;
+        if (tracked)
+            root.activeJobs++;
+        const job = root.executor.createObject(root);
+        if (!job) {
+            if (tracked)
+                root.activeJobs--;
+            Qt.callLater(function () {
+                if (cb)
+                    cb(cmd, "", qsTr("Could not start process"), 127);
+            });
+            return;
+        }
+        const actual = mutation ? shq(root.scriptDir + "run") + " mutate -- bash -c " + shq(cmd) : cmd;
+        job.exec(actual, function (c, out, err, code) {
+            if (tracked)
+                root.activeJobs--;
+            if (cb)
+                cb(cmd, out, err, code);
+        });
+    }
+
+    // Wrap a value as a single-quoted POSIX-shell literal. Returns `'…'` so
+    // callers concatenate without adding their own quotes. Any embedded
+    // single quote is closed, re-opened with an escaped quote, and the literal
+    // resumes — the canonical safe-quoting idiom.
+    // Use this for EVERY user/config/derivation-sourced string that becomes
+    // part of a shell command. Concatenating with bare `'…'` plus `.replace`
+    // is fragile and has been removed.
+    function shq(value) {
+        return "'" + String(value == null ? "" : value).replace(/'/g, "'\\''") + "'";
+    }
+
+    // ── Operations ────────────────────────────────────────────────────────────
+
+    function refreshGenerations() {
+        if (root.isLoadingGens)
+            return;
+        root.isLoadingGens = true;
+        sh(shq(root.scriptDir + "generations"), function (cmd, out, err, code) {
+            root.isLoadingGens = false;
+            const text = (out || "").trim();
+            if (!text) {
+                root.pushToast(qsTr("No generations found — is /nix/var/nix/profiles/ accessible?"), true);
+                return;
+            }
+            root.parseGenerations(text);
+            if (root.expanded)
+                root.probeDiskUsage(false);
+        });
+    }
+
+    function probeSysInfo() {
+        sh(shq(root.scriptDir + "sysinfo"), function (cmd, out, err, code) {
+            root.parseSysInfo(out || "");
+        });
+    }
+
+    // Disk usage is by far the most expensive probe we run: `du -sb /nix/store`
+    // walks every inode in the store and `nix-collect-garbage --dry-run` walks
+    // the whole GC graph. On a large store that is tens of seconds of pegged
+    // CPU and disk. So it is never on a background timer — it runs only when
+    // the popup is actually open (the numbers are only rendered there), it is
+    // rate-limited by diskProbeTtlMs, and never overlaps with itself.
+    // Pass force=true after an operation that actually changed the store.
+    readonly property int diskProbeTtlMs: 30 * 60 * 1000
+    property real _lastDiskProbeMs: 0
+    property bool _diskProbeRunning: false
+
+    function probeDiskUsage(force) {
+        if (root._diskProbeRunning)
+            return;
+        const now = Date.now();
+        root._diskProbeRunning = true;
+        root._lastDiskProbeMs = now;
+        sh(shq(root.scriptDir + "run") + " cached disk " + (force ? "0" : "1800") + " -- " + shq(root.scriptDir + "diskusage"), function (cmd, out, err, code) {
+            root._diskProbeRunning = false;
+            root._lastDiskProbeMs = Date.now();
+            const p = (out || "").split("\x1e");
+            root.diskStoreBytes = parseInt((p[0] || "").trim(), 10) || 0;
+            root.diskReclaimableBytes = (p[1] || "").trim() === "" ? -1 : Number(p[1]);
+            root.diskFreeBytes = parseInt((p[2] || "").trim(), 10) || 0;
+        });
+    }
+
+    function probeSecrets() {
+        if (root.isLoadingSecrets)
+            return;
+        root.isLoadingSecrets = true;
+        sh(shq(root.scriptDir + "secrets") + " " + shq(root.settings.secretsPath) + " " + shq(root.settings.secretsSourcePath) + " " + shq(root.flakePath), function (cmd, out, err, code) {
+            root.isLoadingSecrets = false;
+            root.parseSopsInfo(out || "");
+        });
+    }
+
+    function runHashProbe(mode, input) {
+        root.hashResult = null;
+        // mode comes from a fixed 5-string allowlist in the UI, but guard
+        // defensively in case a future caller passes something else.
+        const allowed = {
+            url: 1,
+            zip: 1,
+            github: 1,
+            file: 1,
+            store: 1
+        };
+        if (!allowed[mode]) {
+            root.hashResult = {
+                value: "ERROR: invalid hash mode",
+                isError: true
+            };
+            return;
+        }
+        if (root.isProbingHash)
+            return;
+        root.isProbingHash = true;
+        sh(shq(root.scriptDir + "hash") + " " + shq(mode) + " " + shq(input), function (cmd, out, err, code) {
+            root.isProbingHash = false;
+            const raw = (out || "").trim();
+            const isError = code !== 0 || raw.startsWith("ERROR:");
+            root.hashResult = {
+                value: raw || err || qsTr("No hash result returned"),
+                isError: isError
+            };
+        });
+    }
+
+    function getPreviousGen(genNum) {
+        for (let i = 0; i < root.generations.length; i++) {
+            if (root.generations[i].number === genNum) {
+                return (i + 1 < root.generations.length) ? root.generations[i + 1].number : root.generations[i].previousNumber || null;
+            }
+        }
+        return null;
+    }
+
+    property var generationCounts: ({})
+    property var countsQueue: []
+    property bool countingChanges: false
+    function countPair(genNum) {
+        const i = generations.findIndex(g => g.number === genNum);
+        const target = i >= 0 ? generations[i] : null;
+        const base = i >= 0 ? generations[i + 1] || (target.previousStorePath ? {
+                number: target.previousNumber,
+                storePath: target.previousStorePath
+            } : null) : null;
+        if (!target || !base || !target.storePath || !base.storePath)
+            return null;
+        return {
+            number: genNum,
+            baseNum: base.number,
+            target: target.storePath,
+            base: base.storePath,
+            key: target.storePath + "|" + base.storePath
+        };
+    }
+    function requestGenerationCounts(genNum) {
+        const pair = countPair(genNum);
+        if (!pair)
+            return;
+        const existing = generationCounts[genNum];
+        if (existing && existing.key === pair.key && (existing.status !== "error" || Date.now() - existing.checked < 60000))
+            return;
+        const next = Object.assign({}, generationCounts);
+        next[genNum] = {
+            key: pair.key,
+            baseNum: pair.baseNum,
+            status: "loading"
+        };
+        generationCounts = next;
+        countsQueue = countsQueue.concat([pair]);
+    }
+    Timer {
+        interval: 80
+        repeat: true
+        running: root.expanded && root.activeViewMode === "timeline" && !root.isBusy && !root.countingChanges && root.countsQueue.length > 0
+        onTriggered: root.loadNextGenerationCounts()
+    }
+    function loadNextGenerationCounts() {
+        if (countingChanges || !expanded || activeViewMode !== "timeline" || isBusy || !countsQueue.length)
+            return;
+        const pair = countsQueue[0];
+        countsQueue = countsQueue.slice(1);
+        const current = countPair(pair.number);
+        if (!current || current.key !== pair.key)
+            return;
+        countingChanges = true;
+        sh(shq(scriptDir + "run") + " cached generation-counts 604800 -- " + shq(scriptDir + "change-counts") + " " + shq(pair.target) + " " + shq(pair.base), function (cmd, out, err, code) {
+            root.countingChanges = false;
+            const live = root.countPair(pair.number);
+            if (!live || live.key !== pair.key)
+                return;
+            let counts = null;
+            try {
+                counts = JSON.parse(out);
+            } catch (e) {}
+            const valid = code === 0 && counts && ["added", "removed", "changed"].every(k => Number.isInteger(counts[k]) && counts[k] >= 0);
+            const next = Object.assign({}, root.generationCounts);
+            next[pair.number] = Object.assign({
+                key: pair.key,
+                baseNum: pair.baseNum,
+                checked: Date.now(),
+                status: valid ? "ok" : "error"
+            }, valid ? counts : {});
+            root.generationCounts = next;
+        });
+    }
+
+    function loadConfigDiff(genNum) {
+        if (root.configDiffCache[genNum] !== undefined)
+            return;
+        const prev = root.getPreviousGen(genNum);
+        const baseNum = prev !== null ? prev : genNum;
+        root.isLoadingConfigDiff = true;
+        sh(shq(root.scriptDir + "config-diff") + " " + baseNum + " " + genNum, function (cmd, out, err, code) {
+            root.isLoadingConfigDiff = false;
+            const parts = (out || "").split("\x1e");
+            const cache = Object.assign({}, root.configDiffCache);
+            cache[genNum] = {
+                status: parts[0] || "error",
+                message: parts[1] || "",
+                repo: parts[2] || "",
+                commitA: parts[3] || "",
+                commitB: parts[4] || "",
+                diff: parts[5] || ""
+            };
+            root.configDiffCache = cache;
+        });
+    }
+
+    function loadGenDetails(genNum) {
+        // Coerce to a strict positive integer — genNum is then safe to splice
+        // into shell paths without further escaping.
+        genNum = parseInt(genNum, 10);
+        if (!(genNum > 0))
+            return;
+        root.loadConfigDiff(genNum);
+        if (root.detailsCache[genNum] !== undefined && !root.detailsCache[genNum].partial && root.detailsCache[genNum].diffMode === root.diffMode) {
+            root.selectedGenNum = genNum;
+            return;
+        }
+        if (root.isLoadingDetails)
+            return;
+        root.selectedGenNum = genNum;
+        root.isLoadingDetails = true;
+        const requestedMode = root.diffMode;
+
+        const link = "/nix/var/nix/profiles/system-" + genNum + "-link";
+        let isBooted = false;
+        for (let i = 0; i < root.generations.length; i++) {
+            if (root.generations[i].number === genNum) {
+                isBooted = root.generations[i].booted;
+                break;
+            }
+        }
+
+        let basePath;
+        if (isBooted) {
+            const prev = root.getPreviousGen(genNum);
+            basePath = prev !== null ? "/nix/var/nix/profiles/system-" + prev + "-link" : link;
+        } else if (root.diffMode === "booted") {
+            const bp = root.bootedStorePath !== "" ? root.bootedStorePath : root.activeStorePath;
+            basePath = bp !== "" ? bp : link;
+        } else {
+            const prev = root.getPreviousGen(genNum);
+            basePath = prev !== null ? "/nix/var/nix/profiles/system-" + prev + "-link" : link;
+        }
+
+        sh(shq(root.scriptDir + "details") + " " + shq(link) + " " + shq(basePath), function (cmd, out, err, code) {
+            root.isLoadingDetails = false;
+            if (code !== 0) {
+                root.pushToast(err || qsTr("Could not compare generation"), true);
+                return;
+            }
+            root.parseDetails(genNum, out || "", basePath, requestedMode);
+        });
+    }
+
+    function comparePair(genA, genB) {
+        genA = parseInt(genA, 10);
+        genB = parseInt(genB, 10);
+        if (!(genA > 0) || !(genB > 0) || genA === genB)
+            return;
+        root.pairDiffA = genA;
+        root.pairDiffB = genB;
+        const key = genA + "_" + genB;
+        if (root.pairDiffCache[key] !== undefined)
+            return;
+        if (root.isLoadingPairDiff)
+            return;
+        root.isLoadingPairDiff = true;
+        const linkA = "/nix/var/nix/profiles/system-" + genA + "-link";
+        const linkB = "/nix/var/nix/profiles/system-" + genB + "-link";
+        // base = B, target = A → diff shows what A has on top of B
+        sh(shq(root.scriptDir + "details") + " " + shq(linkA) + " " + shq(linkB), function (cmd, out, err, code) {
+            root.isLoadingPairDiff = false;
+            if (code !== 0) {
+                root.pushToast(err || qsTr("Could not compare generations"), true);
+                return;
+            }
+            root.parsePairDiff(genA, genB, out || "");
+        });
+    }
+
+    function parsePairDiff(genA, genB, text) {
+        const lines = (text.split("\x1e")[2] || "").split("\n");
+        const diffList = [];
+        for (let i = 0; i < lines.length; i++) {
+            const line = stripAnsi(lines[i]).trim();
+            if (!line)
+                continue;
+            const m = line.match(/^([^:]+):\s+(.+?)\s+(?:→|->)\s+(.+?)(?:,\s+([+-]?\d[\d.,]*\s*[KMGT]?i?B))?$/);
+            if (m) {
+                const oldV = m[2];
+                const newV = m[3];
+                let type = "upgrade";
+                if (oldV === "∅" || oldV === "null")
+                    type = "added";
+                else if (newV === "∅" || newV === "null")
+                    type = "removed";
+                diffList.push({
+                    name: m[1].trim(),
+                    oldVersion: oldV,
+                    newVersion: newV,
+                    size: (m[4] || "").trim(),
+                    type,
+                    storeProfile: "/nix/var/nix/profiles/system-" + (type === "removed" ? genB : genA) + "-link"
+                });
+            }
+        }
+        const cache = Object.assign({}, root.pairDiffCache);
+        cache[genA + "_" + genB] = {
+            diff: diffList
+        };
+        root.pairDiffCache = cache;
+        root.loadIcons(diffList);
+        root.loadMeta(diffList);
+    }
+
+    property var storePathCache: ({})
+    function resolveStorePath(pkg) {
+        const version = pkg.type === "removed" ? pkg.oldVersion : pkg.newVersion;
+        const key = (pkg.storeProfile || "") + "|" + pkg.name + "|" + version;
+        if (!pkg.storeProfile || root.storePathCache[key])
+            return;
+        let cache = Object.assign({}, root.storePathCache);
+        cache[key] = {
+            path: "",
+            message: qsTr("Resolving store path…")
+        };
+        root.storePathCache = cache;
+        sh(shq(root.scriptDir + "store-path") + " " + shq(pkg.storeProfile) + " " + shq(pkg.name) + " " + shq(version), function (cmd, out, err, code) {
+            const next = Object.assign({}, root.storePathCache);
+            const paths = (out || "").trim().split("\n").filter(p => p.startsWith("/nix/store/"));
+            next[key] = {
+                path: paths.join("\n"),
+                message: code ? qsTr("Path unavailable") : qsTr("No matching output in this closure")
+            };
+            root.storePathCache = next;
+        });
+    }
+
+    function loadIcons(diffList) {
+        if (!root.settings.showPackageIcons)
+            return;
+        const unknown = diffList.map(d => d.name).filter(n => !(n in root.iconCache));
+        if (unknown.length === 0)
+            return;
+        const input = unknown.join("\n");
+        sh("printf %s " + shq(input) + " | " + shq(root.scriptDir + "icons"), function (cmd, out, err, code) {
+            const updated = Object.assign({}, root.iconCache);
+            (out || "").split("\n").forEach(line => {
+                const tab = line.indexOf("\t");
+                if (tab > 0)
+                    updated[line.substring(0, tab)] = line.substring(tab + 1).trim();
+            });
+            unknown.forEach(n => {
+                if (!(n in updated))
+                    updated[n] = "";
+            });
+            root.iconCache = updated;
+        });
+    }
+
+    // Resolve a real upstream homepage for each package — meta.homepage from
+    // nixpkgs, or the Website field of a plasmoid metadata.json. One shell call
+    // covers the whole diff (the eval is batched). Packages with no link found
+    // are cached with source="" so we don't re-probe them.
+    function loadMeta(diffList) {
+        const unknown = diffList.map(d => d.name).filter(n => n && !(n in root.metaCache));
+        if (unknown.length === 0)
+            return;
+        const input = unknown.join("\n");
+        sh("printf %s " + shq(input) + " | " + shq(root.scriptDir + "run") + " cached " + shq("meta:" + Qt.md5(input)) + " 3600 -- " + shq(root.scriptDir + "meta"), function (cmd, out, err, code) {
+            const updated = Object.assign({}, root.metaCache);
+            (out || "").split("\n").forEach(line => {
+                const parts = line.split("\t");
+                if (parts.length >= 3 && parts[0])
+                    updated[parts[0]] = {
+                        url: parts[1],
+                        source: parts[2]
+                    };
+            });
+            unknown.forEach(n => {
+                if (!(n in updated))
+                    updated[n] = {
+                        url: "",
+                        source: ""
+                    };
+            });
+            root.metaCache = updated;
+        });
+    }
+
+    // Write the raw flake-probe output + a timestamp to the shared cache file.
+    function writeFlakeCache(rawOutput) {
+        const ts = Math.floor(Date.now() / 1000);
+        root._lastFlakeCacheTs = ts;
+        const content = ts + "\n" + rawOutput;
+        sh("mkdir -p \"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier\"; t=$(mktemp \"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier/.state.XXXXXXXX\") && printf %s " + shq(content) + " > \"$t\" && mv \"$t\" " + root.flakeCacheExpr, null);
+    }
+
+    // Read the shared cache file. Calls cb(tsSeconds, rawTsv) on success, cb(0, "") on miss.
+    function readFlakeCache(cb) {
+        const epoch = root.flakeEpoch;
+        sh("cat " + root.flakeCacheExpr + " 2>/dev/null", function (cmd, out, err, code) {
+            if (epoch !== root.flakeEpoch) {
+                cb(0, "");
+                return;
+            }
+            if (code !== 0 || !(out || "").trim()) {
+                cb(0, "");
+                return;
+            }
+            const nl = out.indexOf("\n");
+            if (nl < 0) {
+                cb(0, "");
+                return;
+            }
+            const ts = parseInt(out.substring(0, nl), 10) || 0;
+            const tsv = out.substring(nl + 1);
+            cb(ts, tsv);
+        });
+    }
+
+    // Apply a cache snapshot: parse the TSV and record which timestamp we applied.
+    function applyFlakeCache(ts, tsv) {
+        root._lastFlakeCacheTs = ts;
+        root.parseFlakeProbe(tsv, false);
+    }
+
+    function checkFlakeUpdates(isRetry, quiet) {
+        if (root.isBusy || root.isCheckingFlake || root.flakePath === "")
+            return;
+        root.isCheckingFlake = true;
+        const epoch = root.flakeEpoch;
+        sh(shq(root.scriptDir + "run") + " cached " + shq("flake:" + root.flakePath) + " 30 -- " + shq(root.scriptDir + "flake-probe") + " " + shq(root.flakePath), function (cmd, out, err, code) {
+            root.isCheckingFlake = false;
+            if (epoch !== root.flakeEpoch)
+                return;
+            if (code !== 0) {
+                const msg = (err || out || "").trim() || qsTr("flake-probe failed");
+                root.pushToast(msg, true);
+                return;
+            }
+            const raw = out || "";
+            root.writeFlakeCache(raw);
+            root.parseFlakeProbe(raw, !!isRetry, !!quiet);
+        });
+    }
+
+    property string _notifiedUpdates: ""
+    function parseFlakeProbe(text, isRetry, quiet) {
+        const lines = text.split("\n");
+        const updates = [];
+        const unreachable = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const parts = lines[i].split("\t");
+            if (parts.length < 6)
+                continue;
+            const name = parts[0];
+            const status = parts[1];
+            const oldRev = parts[2];
+            const newRev = parts[3];
+            const oldDateTs = parseInt(parts[4]) || 0;
+            const url = parts[5];
+            if (!name)
+                continue;
+
+            if (status === "unreachable") {
+                unreachable.push(name);
+                continue;
+            }
+            if (status !== "ok")
+                continue;
+
+            const overrideRef = parts.length > 6 ? parts[6] : "";
+            updates.push({
+                input: name,
+                revisionKey: oldRev + "\n" + newRev,
+                oldRev: oldRev.substring(0, 7),
+                newRev: newRev.substring(0, 7),
+                oldDate: oldDateTs > 0 ? new Date(oldDateTs * 1000).toLocaleDateString() : "",
+                newDate: qsTr("latest"),
+                url: url.replace(/\.git$/, ""),
+                overrideRef: overrideRef
+            });
+        }
+
+        const validPreviews = {};
+        for (const u of updates) {
+            const previous = root.flakeUpdates.find(p => p.input === u.input);
+            if (previous && previous.revisionKey === u.revisionKey && previous.overrideRef === u.overrideRef && root.dryRunCache[u.input])
+                validPreviews[u.input] = root.dryRunCache[u.input];
+        }
+        root.dryRunCache = validPreviews;
+        if (JSON.stringify(root.flakeUpdates) !== JSON.stringify(updates))
+            root.flakeUpdates = updates;
+        root.lastFlakeCheckTime = Qt.formatTime(new Date(), "hh:mm");
+
+        // Transient network blips (network not up yet, GitHub anon rate-limit, brief DNS hiccup)
+        // are common on the first probe after login. Silently retry once; only toast if it
+        // still fails. After the retry succeeds, that recurrence will hit this branch with
+        // no unreachable items, so the toast never fires.
+        if (unreachable.length > 0) {
+            if (!isRetry) {
+                flakeRetryTimer.restart();
+            } else {
+                root.pushToast(qsTr("Could not reach: %1").arg(unreachable.join(", ")), true);
+            }
+        }
+
+        const signature = JSON.stringify(updates);
+        const announce = signature !== root._notifiedUpdates;
+        root._notifiedUpdates = signature;
+        if (updates.length > 0 && announce && !quiet)
+            root.notify(qsTr("NixOS — flake updates available"), (updates.length === 1 ? qsTr("1 flake input has updates available") : qsTr("%1 flake inputs have updates available").arg(updates.length)), false);
+    }
+
+    Timer {
+        id: flakeRetryTimer
+        interval: 15000
+        repeat: false
+        onTriggered: root.checkFlakeUpdates(true)
+    }
+
+    property string updatingInput: ""
+    function runFlakeUpdateInput(inputName) {
+        if (root.flakePath === "") {
+            root.pushToast(qsTr("Flake path not configured."), true);
+            return;
+        }
+        if (root.isBusy) {
+            root.pushToast(qsTr("Already running another action — please wait."), true);
+            return;
+        }
+        root.isBusy = true;
+        root.updatingInput = inputName;
+        root.currentActionType = qsTr("Updating %1…").arg(inputName);
+        const cmd = "cd " + shq(root.flakePath) + " && nix flake update " + shq(inputName);
+        sh(cmd, function (c, out, err, code) {
+            root.isBusy = false;
+            root.updatingInput = "";
+            if (code !== 0) {
+                root.pushToast(qsTr("Update failed: ") + (err || out || "").trim(), true);
+                return;
+            }
+            root.pushToast(qsTr("'%1' updated in lock file.").arg(inputName), false);
+
+            root.refreshFlakeContext(function () {
+                root.checkFlakeUpdates(false, true);
+            });
+        }, true);
+    }
+
+    function runDryPreview(inputName, overrideRef) {
+        if (!overrideRef || root.flakePath === "" || !root.flakeUpdates.some(u => u.input === inputName && u.overrideRef === overrideRef))
+            return;
+        if (root.isDryRunning || root.dryRunCache[inputName] && root.dryRunCache[inputName].status !== "error")
+            return;
+
+        const cache = Object.assign({}, root.dryRunCache);
+        cache[inputName] = {
+            status: "loading",
+            packages: []
+        };
+        root.dryRunCache = cache;
+        root.isDryRunning = true;
+        const epoch = root.flakeEpoch;
+        const revisionKey = root.flakeUpdates.find(u => u.input === inputName).revisionKey;
+
+        sh(shq(root.scriptDir + "run") + " cached " + shq("preview:" + root.flakePath + ":" + root.lockFingerprint) + " 300 -- " + shq(root.scriptDir + "dry-run-preview") + " " + shq(root.flakePath) + " " + shq(inputName) + " " + shq(overrideRef) + " " + shq(root.settings.enableHostDetect ? "auto" : "single"), function (cmd, out, err, code) {
+            root.isDryRunning = false;
+            if (epoch !== root.flakeEpoch || !root.flakeUpdates.some(u => u.input === inputName && u.revisionKey === revisionKey && u.overrideRef === overrideRef))
+                return;
+            const text = (out || "").trim();
+            const updated = Object.assign({}, root.dryRunCache);
+
+            if (code !== 0 || text.startsWith("ERROR:")) {
+                updated[inputName] = {
+                    status: "error",
+                    packages: [],
+                    errorMsg: (text || err || qsTr("Preview failed")).replace(/^ERROR:\s*/, "")
+                };
+                root.dryRunCache = updated;
+                return;
+            }
+            if (text.startsWith("OK:")) {
+                updated[inputName] = {
+                    status: "ok",
+                    packages: []
+                };
+                root.dryRunCache = updated;
+                return;
+            }
+
+            const pkgs = [];
+            const lines = text.split("\n");
+            for (let i = 0; i < lines.length; i++) {
+                const parts = lines[i].split("\t");
+                if (parts.length < 2)
+                    continue;
+                const action = parts[0] || "";
+                const name = parts[1] || "";
+                const oldV = parts[2] || "";
+                const newV = parts[3] || "";
+                if (!name)
+                    continue;
+                pkgs.push({
+                    action,
+                    type: oldV ? "upgrade" : "added",
+                    size: "",
+                    name,
+                    oldVersion: oldV,
+                    newVersion: newV
+                });
+            }
+            updated[inputName] = {
+                status: "ok",
+                packages: pkgs
+            };
+            root.dryRunCache = updated;
+            root.loadIcons(pkgs);
+            root.loadMeta(pkgs);
+        });
+    }
+
+    function runCustomCommand(cmd, label) {
+        if (root.isBusy || !cmd.trim())
+            return;
+        root.isBusy = true;
+        root.currentActionType = qsTr("Running %1…").arg(label);
+        sh(shq(root.scriptDir + "terminal") + " " + shq(root.terminalApp) + " " + shq(root.flakePath) + " " + shq(cmd), function (c, out, err, code) {
+            root.isBusy = false;
+            const message = code === 0 ? qsTr("%1 finished.").arg(label) : qsTr("%1 exited with status %2. %3").arg(label).arg(code).arg((err || "").trim());
+            root.pushToast(message, code !== 0);
+            root.notify("Nixdatifier", message, code !== 0);
+            root.refreshGenerations();
+            root.refreshFlakeContext(function () {
+                if (root.settings.showFlakeSection)
+                    root.checkFlakeUpdates();
+            });
+            root.probeDiskUsage(true);
+        }, true);
+    }
+
+    function requestAction(genNum, action) {
+        if (root.isBusy) {
+            root.pushToast(qsTr("Already running another action — please wait."), true);
+            return;
+        }
+        const needsConfirm = (action === "rollback" || action === "switch") ? root.settings.confirmBeforeRollback : root.settings.confirmBeforeDelete;
+        if (needsConfirm) {
+            root.pendingGenNum = genNum;
+            root.pendingAction = action;
+        } else {
+            executeAction(genNum, action);
+        }
+    }
+
+    function cancelPendingAction() {
+        root.pendingGenNum = -1;
+        root.pendingAction = "";
+    }
+
+    function confirmPendingAction() {
+        if (root.pendingGenNum > 0 && root.pendingAction !== "") {
+            const g = root.pendingGenNum;
+            const a = root.pendingAction;
+            root.pendingGenNum = -1;
+            root.pendingAction = "";
+            executeAction(g, a);
+        }
+    }
+
+    function executeAction(genNum, action) {
+        if (root.isBusy)
+            return;
+        // CRITICAL: this builds a command that runs under `pkexec` (root).
+        // Reject anything that isn't a clean positive int or a known action
+        // before it can reach the shell-string concatenation below.
+        genNum = parseInt(genNum, 10);
+        if (!(genNum > 0))
+            return;
+        if (action !== "switch" && action !== "rollback" && action !== "delete")
+            return;
+        if (action === "switch" && !root.settings.enableLiveSwitch)
+            return;
+        if (action === "delete" && (genNum === root.activeGenNum || genNum === root.bootedGenNum)) {
+            root.pushToast(qsTr("The booted and next-boot generations cannot be deleted."), true);
+            return;
+        }
+        root.isBusy = true;
+        root.currentActionType = action === "switch" ? qsTr("Activating generation…") : action === "rollback" ? qsTr("Setting next boot…") : qsTr("Deleting generation…");
+        root.currentActionGenNum = genNum;
+
+        const prefix = root.settings.usePkexec ? "pkexec " : "";
+        const pathExport = "export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; ";
+        const profileSwitch = prefix + "nix-env --profile /nix/var/nix/profiles/system --switch-generation " + genNum;
+
+        let cmd;
+        if (action === "switch") {
+            cmd = "sh -c \"" + pathExport + profileSwitch + " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration switch 2>&1\"";
+        } else if (action === "rollback") {
+            cmd = "sh -c \"" + pathExport + profileSwitch + " && " + prefix + "/nix/var/nix/profiles/system/bin/switch-to-configuration boot 2>&1\"";
+        } else {
+            cmd = "sh -c \"" + pathExport + prefix + "nix-env --profile /nix/var/nix/profiles/system --delete-generations " + genNum + " 2>&1\"";
+        }
+
+        sh(cmd, function (c, out, err, code) {
+            root.isBusy = false;
+            if (code !== 0) {
+                const msg = (err || out || "").trim();
+                const labels = {
+                    switch: qsTr("Live switch failed: "),
+                    rollback: qsTr("Set-next-boot failed: "),
+                    delete: qsTr("Delete failed: ")
+                };
+                root.pushToast((labels[action] || "") + msg, true);
+                return;
+            }
+            const ok = {
+                switch: qsTr("Generation %1 is now active."),
+                rollback: qsTr("Generation %1 set for next boot. Reboot to activate."),
+                delete: qsTr("Generation %1 deleted.")
+            };
+            const okTitle = {
+                switch: qsTr("NixOS — generation activated"),
+                rollback: qsTr("NixOS — next boot set"),
+                delete: qsTr("NixOS — generation deleted")
+            };
+            root.pushToast(ok[action].arg(genNum), false);
+            root.notify(okTitle[action], ok[action].arg(genNum), false);
+            if (action === "delete" && root.selectedGenNum === genNum)
+                root.selectedGenNum = -1;
+            root.refreshGenerations();
+            root.probeDiskUsage(true);
+        }, true);
+    }
+
+    function executeCleanup(mode) {
+        if (mode === "gc-custom") {
+            const cmd = root.settings.gcCustomCommand.trim();
+            if (cmd)
+                root.runCustomCommand(cmd, cmd);
+            return;
+        }
+        if (root.isBusy) {
+            root.pushToast(qsTr("Already running another action — please wait."), true);
+            return;
+        }
+        root.currentActionType = qsTr("Cleaning Nix store…");
+        if (mode !== "gc" && mode !== "gc-14d" && mode !== "gc-all")
+            return;
+        root.isBusy = true;
+        const prefix = root.settings.usePkexec ? "pkexec " : "";
+        const pathExport = "export PATH=$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin; ";
+        let gcArgs;
+        if (mode === "gc")
+            gcArgs = "";
+        else if (mode === "gc-14d")
+            gcArgs = " --delete-older-than 14d";
+        else
+            gcArgs = " -d";
+        const cmd = "sh -c \"" + pathExport + prefix + "nix-collect-garbage" + gcArgs + " 2>&1\"";
+        sh(cmd, function (c, out, err, code) {
+            root.isBusy = false;
+            if (code !== 0) {
+                root.pushToast(qsTr("GC failed: ") + (err || out || "").trim(), true);
+                return;
+            }
+            const freed = (out || "").match(/(\d[\d,.]* \w+B?) freed/i);
+            const msg = freed ? qsTr("GC complete — %1 freed.").arg(freed[1]) : qsTr("GC complete.");
+            root.pushToast(msg, false);
+            root.notify(qsTr("NixOS — garbage collected"), msg, false);
+            root.refreshGenerations();
+            root.probeDiskUsage(true);
+        }, true);
+    }
+
+    // ── Parsers ───────────────────────────────────────────────────────────────
+
+    function parseGenerations(text) {
+        const lines = text.split("\n");
+
+        let activePath = "";
+        let bootedPath = "";
+        let startIdx = 0;
+        if (lines[0] && (lines[0].startsWith("/nix/store/") || lines[0].startsWith("/nix/var/"))) {
+            activePath = lines[0].trim();
+            startIdx = 1;
+            if (lines[1] && (lines[1].startsWith("/nix/store/") || lines[1].startsWith("/nix/var/"))) {
+                bootedPath = lines[1].trim();
+                startIdx = 2;
+            }
+        }
+        root.activeStorePath = activePath;
+        root.bootedStorePath = bootedPath;
+
+        const list = [];
+        let activeNum = -1;
+        let bootedNum = -1;
+        for (let i = startIdx; i < lines.length; i++) {
+            const m = lines[i].match(/^([\d-]+ [\d:]+)\.\d+ [+-]\d+ '([^']*system-(\d+)-link)' -> '([^']+)'/);
+            if (!m)
+                continue;
+            const genNum = parseInt(m[3]);
+            const storePath = m[4];
+            const isActive = activePath !== "" && storePath === activePath;
+            const isBooted = bootedPath !== "" && storePath === bootedPath;
+            if (isActive)
+                activeNum = genNum;
+            if (isBooted)
+                bootedNum = genNum;
+            list.push({
+                number: genNum,
+                timestamp: m[1],
+                storePath,
+                active: isActive,
+                booted: isBooted
+            });
+        }
+
+        list.sort((a, b) => b.number - a.number);
+        // Keep the preceding closure even when the displayed history is limited.
+        for (let i = 0; i + 1 < list.length; ++i) {
+            list[i].previousNumber = list[i + 1].number;
+            list[i].previousStorePath = list[i + 1].storePath;
+        }
+
+        // Keep only the highest generation matching the booted store path
+        let maxBooted = list.reduce((max, g) => g.booted && g.number > max ? g.number : max, -1);
+        bootedNum = maxBooted;
+        for (let i = 0; i < list.length; i++)
+            list[i].booted = (list[i].number === bootedNum);
+
+        const maxG = Math.max(3, root.settings.maxGenerations || 10);
+        if (list.length > maxG)
+            list.splice(maxG);
+
+        activeNum = list.reduce((max, g) => g.active && g.number > max ? g.number : max, -1);
+        list.forEach(g => g.active = g.number === activeNum);
+        if (JSON.stringify(root.generations) !== JSON.stringify(list))
+            root.generations = list;
+        root.activeGenNum = activeNum;
+        root.bootedGenNum = bootedNum;
+
+        root.loadGenSummaries();
+        root.snapshotActiveConfig();
+        root.probeSysInfo();
+    }
+
+    // Eagerly populate nixos-version + kernel for all gens (no nix commands — instant).
+    // Writes partial detailsCache entries so header badges appear without expanding first.
+    function loadGenSummaries() {
+        sh(shq(root.scriptDir + "gen-summaries"), function (cmd, out, err, code) {
+            const records = (out || "").split("\x1d");
+            const cache = Object.assign({}, root.detailsCache);
+            for (let i = 0; i < records.length; i++) {
+                const parts = records[i].split("\x1e");
+                const genNum = parseInt(parts[0], 10);
+                if (!(genNum > 0))
+                    continue;
+                // Don't overwrite a fully-loaded entry (which has diff data).
+                if (cache[genNum] !== undefined && !cache[genNum].partial)
+                    continue;
+                const nixosVer = (parts[1] || "").trim();
+                const kernelPath = (parts[2] || "").trim();
+                const kMatch = kernelPath.match(/linux-([^/]+)/);
+                const kernelVer = kMatch ? kMatch[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
+                cache[genNum] = {
+                    nixosVer,
+                    kernelVer,
+                    commitDate: "",
+                    diff: [],
+                    closureBytes: 0,
+                    partial: true
+                };
+            }
+            root.detailsCache = cache;
+        });
+    }
+
+    // Record git HEAD of the config repo for the currently-active generation.
+    // Idempotent — the tool short-circuits if (gen, commit) is already on file.
+    // Only fires when a config repo is configured (or flakePath is a git repo).
+    function snapshotActiveConfig() {
+        if (root.activeGenNum <= 0)
+            return;
+        const repo = (root.settings.configRepoPath || root.flakePath || "").trim();
+        if (!repo)
+            return;
+        sh(shq(root.scriptDir + "config-snapshot") + " " + root.activeGenNum + " " + shq(repo), function (cmd, out, err, code) { /* fire-and-forget */ });
+    }
+
+    function stripAnsi(s) {
+        return s.replace(/\x1b\[[0-9;]*[mGKHFABCDEFJRSTsu]/g, "");
+    }
+
+    function parseDetails(genNum, text, basePath, requestedMode) {
+        // \x1e separates: [0]=nixos-version  [1]=kernel-path  [2]=diff lines
+        const parts = text.split("\x1e");
+        const nixosVer = stripAnsi((parts[0] || "").trim());
+        const kernelPath = stripAnsi((parts[1] || "").trim());
+        const kMatch = kernelPath.match(/linux-([^/]+)/);
+        const kernelVer = kMatch ? kMatch[1] : (kernelPath ? kernelPath.split("/").slice(-2, -1)[0] : "—");
+        const diffRaw = parts[2] || "";
+        const sizeRaw = (parts[3] || "").trim();
+        const closureBytes = /^\d+$/.test(sizeRaw) ? parseInt(sizeRaw, 10) : 0;
+
+        const diffList = [];
+        const lines = diffRaw.split("\n");
+        for (let i = 0; i < lines.length; i++) {
+            const line = stripAnsi(lines[i]).trim();
+            if (!line)
+                continue;
+            const m = line.match(/^([^:]+):\s+(.+?)\s+(?:→|->)\s+(.+?)(?:,\s+([+-]?\d[\d.,]*\s*[KMGT]?i?B))?$/);
+            if (m) {
+                const oldV = m[2];
+                const newV = m[3];
+                let type = "upgrade";
+                if (oldV === "∅" || oldV === "null")
+                    type = "added";
+                else if (newV === "∅" || newV === "null")
+                    type = "removed";
+                diffList.push({
+                    name: m[1].trim(),
+                    oldVersion: oldV,
+                    newVersion: newV,
+                    size: (m[4] || "").trim(),
+                    type,
+                    storeProfile: type === "removed" ? (basePath || "/run/booted-system") : "/nix/var/nix/profiles/system-" + genNum + "-link"
+                });
+            }
+        }
+
+        // Extract commit date from nixos version e.g. "25.11.20260518.abc1234"
+        let commitDate = "";
+        const dateM = nixosVer.match(/(\d{4})(\d{2})(\d{2})/);
+        if (dateM)
+            commitDate = dateM[1] + "-" + dateM[2] + "-" + dateM[3];
+
+        const cache = Object.assign({}, root.detailsCache);
+        cache[genNum] = {
+            nixosVer,
+            kernelVer,
+            commitDate,
+            diff: diffList,
+            closureBytes,
+            diffMode: requestedMode || root.diffMode
+        };
+        root.detailsCache = cache;
+        root.loadIcons(diffList);
+        root.loadMeta(diffList);
+    }
+
+    function parseSysInfo(text) {
+        const p = text.split("---");
+        root.hostname = p[0] ? p[0].trim() : "";
+        root.nixosVersion = p[1] ? p[1].trim() : "";
+        root.uptime = p[2] ? p[2].trim() : "";
+        root.lastActivationTime = p[3] ? p[3].trim() : "";
+    }
+
+    function parseSopsInfo(text) {
+        const blocks = text.split("===");
+        root.deployedSecrets = parseSecretsBlock(blocks[0] || "", "deployed");
+        root.sourceSecrets = parseSecretsBlock(blocks[1] || "", "source");
+    }
+
+    function parseSecretsBlock(raw, kind) {
+        const empty = {
+            path: "",
+            exists: false,
+            lastModified: "",
+            freshness: "",
+            fileCount: 0,
+            names: [],
+            encKind: "",
+            sopsVersion: "",
+            recipientCount: 0,
+            encType: ""
+        };
+        // Preserve a leading empty line (path=empty) by only trimming, not filtering.
+        const rawLines = raw.split("\n").map(l => l.trim());
+        // Drop leading blank lines AND trailing blank lines, keep blanks in between.
+        let start = 0;
+        while (start < rawLines.length && rawLines[start] === "")
+            start++;
+        // If the first non-blank line is a status keyword, the path field was empty.
+        if (start >= rawLines.length || rawLines[start] === "missing")
+            return empty;
+        const lines = rawLines.slice(start).filter(l => l !== "");
+        if (lines.length < 2)
+            return empty;
+        const sep = lines.indexOf("---");
+        const exists = lines[1] === "exists";
+        const lastModified = (sep > 2) ? lines[2] : "";
+        const names = lines.filter(l => l.startsWith("name:")).map(l => l.slice(5));
+
+        if (kind === "deployed") {
+            const freshness = (sep >= 0 && lines.length > sep + 1) ? lines[sep + 1] : "";
+            const fileCount = (sep >= 0 && lines.length > sep + 2) ? (parseInt(lines[sep + 2]) || 0) : 0;
+            return {
+                path: lines[0],
+                exists,
+                lastModified,
+                freshness,
+                fileCount,
+                names,
+                encKind: "",
+                sopsVersion: "",
+                recipientCount: 0,
+                encType: ""
+            };
+        } else {
+            const encKind = (sep >= 0 && lines.length > sep + 1) ? lines[sep + 1] : "";
+            const sopsVersion = (sep >= 0 && lines.length > sep + 2) ? lines[sep + 2] : "";
+            const recipientCount = (sep >= 0 && lines.length > sep + 3) ? (parseInt(lines[sep + 3]) || 0) : 0;
+            const encType = (sep >= 0 && lines.length > sep + 4) ? lines[sep + 4] : "";
+            return {
+                path: lines[0],
+                exists,
+                lastModified,
+                freshness: "",
+                fileCount: names.length,
+                names,
+                encKind,
+                sopsVersion,
+                recipientCount,
+                encType
+            };
+        }
+    }
+
+    // ── Init & timers ─────────────────────────────────────────────────────────
+    function start() {
+        refreshGenerations();
+        probeSysInfo();
+        probeSecrets();
+        // Deliberately no probeDiskUsage() here — it is deferred to the first
+        // time the popup is opened, so a widget that is never clicked never
+        // walks /nix/store.
+        root.refreshFlakeContext(function () {
+            if (root.settings.showFlakeSection && root.flakePath !== "") {
+                root.bootFlakeCheck();
+                root.armCacheWatcher();
+            }
+        });
+    }
+
+    Component.onCompleted: {
+        initialized = true;
+        if (autoStart)
+            Qt.callLater(start);
+    }
+
+    // On startup: read the shared cache first. If it is fresh (written within
+    // checkInterval seconds by any widget instance), apply it immediately and
+    // skip the network probe entirely. Otherwise fall through to the deferred probe.
+    function bootFlakeCheck() {
+        root.readFlakeCache(function (ts, tsv) {
+            if (ts > 0 && tsv.trim() !== "") {
+                const age = Math.floor(Date.now() / 1000) - ts;
+                const interval = Math.max(60, root.settings.checkInterval || 3600);
+                if (age < interval) {
+                    root.applyFlakeCache(ts, tsv);
+                    return;
+                }
+            }
+            initialFlakeCheckTimer.start();
+        });
+    }
+
+    // Deferred first probe — gives the network a chance to come up after login.
+    Timer {
+        id: initialFlakeCheckTimer
+        interval: 30000
+        repeat: false
+        onTriggered: root.checkFlakeUpdates()
+    }
+
+    onExpandedChanged: {
+        if (root.initialized && root.settings && root.expanded && root.autoStart) {
+            root.refreshFlakeContext(function (changed) {
+                if (changed && root.settings.showFlakeSection)
+                    root.checkFlakeUpdates();
+            });
+            if (root.settings.autoRefreshOnOpen) {
+                refreshGenerations();
+                probeSysInfo();
+            }
+            // The very first open always populates the disk chips; after that
+            // it follows the auto-refresh preference. Either way it is
+            // TTL-guarded, so reopening the popup does not re-walk the store.
+            if (root._lastDiskProbeMs === 0 || root.settings.autoRefreshOnOpen)
+                probeDiskUsage();
+        }
+    }
+
+    Timer {
+        interval: 30000
+        repeat: true
+        running: root.autoStart && root.expanded && root.flakePath !== ""
+        onTriggered: root.refreshFlakeContext(function (changed) {
+            if (changed && root.settings.showFlakeSection)
+                root.checkFlakeUpdates();
+        })
+    }
+    Connections {
+        target: root.settings
+        function onFlakePathChanged() {
+            if (root.autoStart)
+                root.refreshFlakeContext(function () {
+                    if (root.settings.showFlakeSection)
+                        root.checkFlakeUpdates();
+                });
+        }
+        function onShowFlakeSectionChanged() {
+            if (root.autoStart && root.settings.showFlakeSection) {
+                root.checkFlakeUpdates();
+                root.armCacheWatcher();
+            }
+        }
+        function onSecretsPathChanged() {
+            if (root.autoStart)
+                root.probeSecrets();
+        }
+        function onSecretsSourcePathChanged() {
+            if (root.autoStart)
+                root.probeSecrets();
+        }
+    }
+    // Full network probe on the configured interval.
+    Timer {
+        interval: Math.max(60, root.settings.checkInterval || 3600) * 1000
+        running: root.autoStart && root.settings.showFlakeSection && root.flakePath !== ""
+        repeat: true
+        onTriggered: root.checkFlakeUpdates()
+    }
+
+    // Cross-instance sync via inotifywait: starts a one-shot shell that blocks
+    // until the cache file is modified, then reads and applies it immediately,
+    // then arms itself again. Falls back to a slow poll when inotifywait is
+    // missing or unusable.
+    //
+    // The watch command reports its own outcome instead of unconditionally
+    // succeeding: an absent inotifywait, a too-old inotify-tools without
+    // --include, or a missing cache directory used to make the callback fire
+    // instantly, which re-armed instantly, which spawned another shell — a
+    // process-spawn loop that pegs a core for as long as the widget is loaded.
+    // Now a non-"changed" result switches to polling permanently, arming is
+    // never faster than watcherMinArmMs, and a run of suspiciously fast
+    // "changed" results also drops us to polling.
+    readonly property int watcherMinArmMs: 2000
+    readonly property int watcherMaxFastArms: 5
+    property bool _watcherArmed: false
+    property bool _watcherDisabled: false
+    property real _watcherArmedAtMs: 0
+    property int _watcherFastArms: 0
+
+    function armCacheWatcher() {
+        if (!root.autoStart || !root.settings.showFlakeSection || root._watcherArmed || root._watcherDisabled || root.flakePath === "")
+            return;
+        root._watcherArmed = true;
+        root._watcherArmedAtMs = Date.now();
+        // Watch the cache directory for writes to our specific filename.
+        // Watching the directory means inotifywait works even before the file exists.
+        const cacheDir = '"${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier"';
+        const cacheName = root.flakeCacheName;
+        const probe = "command -v inotifywait >/dev/null 2>&1 || { echo unsupported; exit 0; }; mkdir -p " + cacheDir + "; inotifywait -t 300 -e close_write -e moved_to -q --include '(flake.lock|flake-.*)' " + cacheDir + " " + shq(root.flakePath) + " >/dev/null 2>&1; code=$?; if [ $code -eq 0 ]; then echo changed; elif [ $code -eq 2 ]; then echo timeout; else echo failed; fi";
+        sh(probe, function (cmd, out, err, code) {
+            root._watcherArmed = false;
+            const result = (out || "").trim();
+
+            if (result === "timeout") {
+                watcherRearmTimer.restart();
+                return;
+            }
+            if (result !== "changed") {
+                // No usable watch (no inotifywait, unsupported flags, bad dir).
+                root.fallBackToCachePolling();
+                return;
+            }
+
+            // A real close_write can legitimately arrive quickly, but a *run*
+            // of near-instant returns means the watch is not actually blocking.
+            if (Date.now() - root._watcherArmedAtMs < root.watcherMinArmMs) {
+                root._watcherFastArms += 1;
+                if (root._watcherFastArms >= root.watcherMaxFastArms) {
+                    root.fallBackToCachePolling();
+                    return;
+                }
+            } else {
+                root._watcherFastArms = 0;
+            }
+
+            root.refreshFlakeContext(function (changed) {
+                if (changed && root.settings.showFlakeSection)
+                    root.checkFlakeUpdates();
+                else if (!root.isCheckingFlake)
+                    root.syncFlakeCache();
+            });
+
+            // Re-arm off a timer, never straight from the callback, so there is
+            // always a floor on how often we can spawn the watch process.
+            watcherRearmTimer.restart();
+        });
+    }
+
+    function fallBackToCachePolling() {
+        root._watcherDisabled = true;
+        watcherRearmTimer.stop();
+        flakeCacheFallbackTimer.start();
+    }
+
+    function syncFlakeCache() {
+        root.readFlakeCache(function (ts, tsv) {
+            if (ts > root._lastFlakeCacheTs)
+                root.applyFlakeCache(ts, tsv);
+        });
+    }
+
+    // Enforces watcherMinArmMs between two consecutive watch processes.
+    Timer {
+        id: watcherRearmTimer
+        interval: root.watcherMinArmMs
+        repeat: false
+        onTriggered: root.armCacheWatcher()
+    }
+
+    // Fallback poll used only when inotifywait is unavailable or unusable.
+    // Cross-instance flake state is not urgent, so this is deliberately slow:
+    // it is a `cat` of a small file, but there is no reason to do it every
+    // minute for the life of the session.
+    Timer {
+        id: flakeCacheFallbackTimer
+        interval: 300000
+        repeat: true
+        running: false
+        onTriggered: {
+            if (root.isCheckingFlake || !root.settings.showFlakeSection)
+                return;
+            root.refreshFlakeContext(function (changed) {
+                if (changed)
+                    root.checkFlakeUpdates();
+                else
+                    root.syncFlakeCache();
+            });
+        }
+    }
+
+    // sysinfo is cheap (reads /proc and two small files), but there is no point
+    // refreshing it every 5 minutes when nothing is on screen — while the popup
+    // is closed it only backs the panel tooltip, so a slow tick is plenty.
+    Timer {
+        interval: root.expanded ? 300000 : 1800000
+        running: root.autoStart
+        repeat: true
+        onTriggered: root.probeSysInfo()
+    }
+
+    // True only while the popup is actually on screen. Threaded down through
+    // the view tree so looping animations can stop when nobody can see them —
+    // a QML animation left running keeps the render loop ticking whether or
+    // not its item is visible.
+    readonly property bool uiActive: root.expanded
+}

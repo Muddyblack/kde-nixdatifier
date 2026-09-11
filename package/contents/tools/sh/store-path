@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Resolve exact package/version paths in the selected generation's closure.
+set -euo pipefail
+profile=${1:?}; name=${2:?}; version=${3:-}
+[[ "$profile" =~ ^/nix/var/nix/profiles/system-[0-9]+-link$ || "$profile" == /run/booted-system || "$profile" == /run/current-system ]] || exit 2
+helper_dir=$(dirname "$(realpath "$0")")
+"$helper_dir/run" cached "closure:$(readlink -f "$profile")" 1800 -- nix-store -q --requisites "$profile" | while IFS= read -r path; do
+    suffix=${path##*/}; suffix=${suffix#*-}
+    if [[ "$suffix" == "$name-$version" || "$suffix" == "$name" && "$version" == 'ε' ]]; then printf '%s\n' "$path"; fi
+done

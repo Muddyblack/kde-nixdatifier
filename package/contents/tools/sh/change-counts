@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""Count package additions, removals, and changes between immutable closures."""
+import json
+import re
+import subprocess
+import sys
+
+target, base = sys.argv[1:3]
+counts = {"added": 0, "removed": 0, "changed": 0}
+if target != base:
+    result = subprocess.run(
+        ["nix", "--extra-experimental-features", "nix-command flakes",
+         "store", "diff-closures", base, target],
+        capture_output=True, text=True,
+    )
+    if result.returncode:
+        sys.stderr.write(result.stderr)
+        sys.exit(result.returncode)
+    pattern = re.compile(r"^[^:]+:\s+(.+?)\s+(?:→|->)\s+(.+?)(?:,\s+[+-]?\d[\d.,]*\s*[KMGT]?i?B)?$")
+    for line in result.stdout.splitlines():
+        match = pattern.match(re.sub(r"\x1b\[[0-9;]*[mGKHFABCDEFJRSTsu]", "", line).strip())
+        if match:
+            old, new = match.groups()
+            kind = "added" if old in ("∅", "null") else "removed" if new in ("∅", "null") else "changed"
+            counts[kind] += 1
+print(json.dumps(counts))

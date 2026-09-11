@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs inside the terminal. Report the actual command exit, before the hold prompt.
+set -u
+job_dir=$1; job_workdir=$2; job_shell=$3; job_command=$4
+finish() { local code=$?; trap - EXIT; printf '%s\n' "$code" > "$job_dir/done.tmp"; mv "$job_dir/done.tmp" "$job_dir/done"; }
+trap finish EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+printf '%s\n' "$$" > "$job_dir/pid"
+cd -- "$job_workdir" || exit 1
+"$job_shell" -ic "$job_command"
+job_code=$?
+(exit "$job_code")
+finish
+trap - EXIT
+printf '\n── exited %s · press Enter to close ── ' "$job_code"
+IFS= read -r _ </dev/tty || true
+exit "$job_code"

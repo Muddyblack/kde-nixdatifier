@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.20)
+project(nixdatifier-tray LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 17)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Svg)
+qt_add_executable(nixdatifier-tray main.cpp)
+target_link_libraries(nixdatifier-tray PRIVATE Qt6::Widgets Qt6::Svg)
+install(TARGETS nixdatifier-tray RUNTIME DESTINATION bin)

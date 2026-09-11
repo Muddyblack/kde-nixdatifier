@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "shared" as UI
 
 Item {
     id: secretsTab
@@ -17,7 +17,7 @@ Item {
         return Qt.resolvedUrl("assets/" + name + ".svg");
     }
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * Kirigami.Theme.smallFont.pixelSize * fs));
+        return Math.max(1, Math.round(n / 9.0 * (UI.Theme.smallFont.pixelSize > 0 ? UI.Theme.smallFont.pixelSize : 11) * fs));
     }
 
     anchors.fill: parent
@@ -36,9 +36,9 @@ Item {
             return "SOPS" + (tLabel ? " / " + tLabel : "");
         }
         if (k === "plain")
-            return i18n("Plaintext — not encrypted!");
+            return qsTr("Plaintext — not encrypted!");
         if (k === "directory")
-            return i18n("Directory");
+            return qsTr("Directory");
         return k;
     }
 
@@ -52,7 +52,7 @@ Item {
             spacing: 8
             Layout.bottomMargin: 8
 
-            Kirigami.Icon {
+            UI.Icon {
                 source: secretsTab.svg("ic_secrets")
                 isMask: true
                 implicitWidth: 20
@@ -61,7 +61,7 @@ Item {
             }
 
             Text {
-                text: i18n("SOPS / Agenix Secrets")
+                text: qsTr("SOPS / Agenix Secrets")
                 color: secretsTab.textColor
                 font.pixelSize: secretsTab.fpx(12)
                 font.bold: true
@@ -71,7 +71,7 @@ Item {
 
         Rectangle {
             Layout.fillWidth: true
-            height: 1
+            implicitHeight: 1
             color: Qt.rgba(1, 1, 1, 0.08)
             Layout.bottomMargin: 8
         }
@@ -105,7 +105,7 @@ Item {
                         Layout.bottomMargin: 2
 
                         Text {
-                            text: i18n("Deployed")
+                            text: qsTr("Deployed")
                             color: secretsTab.textColor
                             font.pixelSize: secretsTab.fpx(10)
                             font.bold: true
@@ -118,12 +118,12 @@ Item {
                             color: secretsTab.deployedSecrets.exists ? Qt.rgba(0.2, 0.8, 0.3, 0.15) : Qt.rgba(1, 0.2, 0.2, 0.15)
                             border.color: secretsTab.deployedSecrets.exists ? "#55cc55" : "#ff5555"
                             border.width: 1
-                            width: deployedPill.implicitWidth + 12
-                            height: 17
+                            implicitWidth: deployedPill.implicitWidth + 12
+                            implicitHeight: 17
                             Text {
                                 id: deployedPill
                                 anchors.centerIn: parent
-                                text: secretsTab.deployedSecrets.exists ? i18n("OK") : i18n("Missing")
+                                text: secretsTab.deployedSecrets.exists ? qsTr("OK") : qsTr("Missing")
                                 color: secretsTab.deployedSecrets.exists ? "#55cc55" : "#ff5555"
                                 font.pixelSize: secretsTab.fpx(8)
                                 font.bold: true
@@ -137,25 +137,25 @@ Item {
                             const d = secretsTab.deployedSecrets;
                             const rows = [];
                             rows.push({
-                                label: i18n("Path:"),
-                                value: d.path || i18n("Auto-detecting…"),
+                                label: qsTr("Path:"),
+                                value: d.path || qsTr("Auto-detecting…"),
                                 dim: !d.path
                             });
                             if (d.exists) {
                                 rows.push({
-                                    label: i18n("Last modified:"),
+                                    label: qsTr("Last modified:"),
                                     value: d.lastModified || "—",
                                     dim: false
                                 });
                                 rows.push({
-                                    label: i18n("Freshness:"),
+                                    label: qsTr("Freshness:"),
                                     value: d.freshness || "—",
                                     dim: false,
                                     fresh: d.freshness
                                 });
                                 rows.push({
-                                    label: i18n("Secrets:"),
-                                    value: d.fileCount + (d.fileCount === 1 ? " " + i18n("file") : " " + i18n("files")),
+                                    label: qsTr("Secrets:"),
+                                    value: d.fileCount + (d.fileCount === 1 ? " " + qsTr("file") : " " + qsTr("files")),
                                     dim: false
                                 });
                             }
@@ -206,7 +206,7 @@ Item {
                                     color: secretsTab.textColor
                                     opacity: 0.7
                                     font.pixelSize: secretsTab.fpx(8)
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                    font.family: UI.Theme.fixedWidthFont.family
                                 }
                             }
                         }
@@ -216,7 +216,7 @@ Item {
                 // ── Divider ───────────────────────────────────────
                 Rectangle {
                     Layout.fillWidth: true
-                    height: 1
+                    implicitHeight: 1
                     color: Qt.rgba(1, 1, 1, 0.06)
                     Layout.bottomMargin: 10
                     visible: secretsTab.sourceSecrets.path !== ""
@@ -234,7 +234,7 @@ Item {
                         Layout.bottomMargin: 2
 
                         Text {
-                            text: i18n("Source (encrypted)")
+                            text: qsTr("Source (encrypted)")
                             color: secretsTab.textColor
                             font.pixelSize: secretsTab.fpx(10)
                             font.bold: true
@@ -247,12 +247,12 @@ Item {
                             color: secretsTab.sourceSecrets.exists ? Qt.rgba(0.2, 0.8, 0.3, 0.15) : Qt.rgba(1, 0.2, 0.2, 0.15)
                             border.color: secretsTab.sourceSecrets.exists ? "#55cc55" : "#ff5555"
                             border.width: 1
-                            width: sourcePill.implicitWidth + 12
-                            height: 17
+                            implicitWidth: sourcePill.implicitWidth + 12
+                            implicitHeight: 17
                             Text {
                                 id: sourcePill
                                 anchors.centerIn: parent
-                                text: secretsTab.sourceSecrets.exists ? i18n("OK") : i18n("Missing")
+                                text: secretsTab.sourceSecrets.exists ? qsTr("OK") : qsTr("Missing")
                                 color: secretsTab.sourceSecrets.exists ? "#55cc55" : "#ff5555"
                                 font.pixelSize: secretsTab.fpx(8)
                                 font.bold: true
@@ -265,35 +265,35 @@ Item {
                             const s = secretsTab.sourceSecrets;
                             const rows = [];
                             rows.push({
-                                label: i18n("Path:"),
-                                value: s.path || i18n("Not configured"),
+                                label: qsTr("Path:"),
+                                value: s.path || qsTr("Not configured"),
                                 dim: !s.path,
                                 warn: false
                             });
                             if (s.exists) {
                                 rows.push({
-                                    label: i18n("Last modified:"),
+                                    label: qsTr("Last modified:"),
                                     value: s.lastModified || "—",
                                     dim: false,
                                     warn: false
                                 });
                                 const enc = secretsTab.encLabel(s);
                                 rows.push({
-                                    label: i18n("Format:"),
+                                    label: qsTr("Format:"),
                                     value: enc || "—",
                                     dim: false,
                                     warn: s.encKind === "plain"
                                 });
                                 if (s.sopsVersion)
                                     rows.push({
-                                        label: i18n("SOPS:"),
+                                        label: qsTr("SOPS:"),
                                         value: "v" + s.sopsVersion,
                                         dim: false,
                                         warn: false
                                     });
                                 if (s.recipientCount > 0)
                                     rows.push({
-                                        label: i18n("Recipients:"),
+                                        label: qsTr("Recipients:"),
                                         value: s.recipientCount + (s.encType ? " (" + s.encType + ")" : ""),
                                         dim: false,
                                         warn: false
@@ -346,7 +346,7 @@ Item {
                                     color: secretsTab.textColor
                                     opacity: 0.7
                                     font.pixelSize: secretsTab.fpx(8)
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
+                                    font.family: UI.Theme.fixedWidthFont.family
                                 }
                             }
                         }
@@ -356,12 +356,12 @@ Item {
                 // ── Nothing configured ────────────────────────────
                 Text {
                     visible: secretsTab.nothingConfigured
-                    text: i18n("No secrets found.\nDeployed secrets are auto-detected at /run/secrets or /run/agenix.d.\nSet a source file path in Settings → Behavior.")
+                    text: qsTr("No secrets found.\nDeployed secrets are auto-detected at /run/secrets or /run/agenix.d.\nSet a source file path in Settings → Behavior.")
                     color: secretsTab.textColor
                     opacity: 0.38
                     font.pixelSize: secretsTab.fpx(9)
                     wrapMode: Text.WordWrap
-                    width: parent.width
+                    Layout.preferredWidth: parent.width
                     horizontalAlignment: Text.AlignHCenter
                     Layout.fillWidth: true
                 }

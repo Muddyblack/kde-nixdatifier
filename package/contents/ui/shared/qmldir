@@ -1,0 +1,7 @@
+singleton Theme 1.0 Theme.qml
+Icon 1.0 Icon.qml
+ActionButton 1.0 ActionButton.qml
+Flake 1.0 Flake.qml
+NavigationTab 1.0 NavigationTab.qml
+GenerationPicker 1.0 GenerationPicker.qml
+DisclosureButton 1.0 DisclosureButton.qml

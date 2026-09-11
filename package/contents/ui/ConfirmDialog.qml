@@ -1,7 +1,7 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "shared" as UI
 
 Dialog {
     id: confirmDialog
@@ -19,12 +19,12 @@ Dialog {
     signal confirmed(int genNum, string action)
 
     // Theme-aware font sizing. Legacy hardcoded sizes were tuned against a 9px base.
-    readonly property int baseFontPx: Kirigami.Theme.smallFont.pixelSize
+    readonly property int baseFontPx: (UI.Theme.smallFont.pixelSize > 0 ? UI.Theme.smallFont.pixelSize : 11)
     function fpx(n) {
         return Math.max(1, Math.round(n / 9.0 * baseFontPx * fs));
     }
 
-    title: pendingAction === "delete" ? i18n("Delete Generation") : (pendingAction === "switch" ? i18n("Activate Generation Now") : i18n("Set Next Boot Generation"))
+    title: pendingAction === "delete" ? qsTr("Delete Generation") : (pendingAction === "switch" ? qsTr("Activate Generation Now") : qsTr("Set Next Boot Generation"))
 
     modal: true
     anchors.centerIn: parent
@@ -32,7 +32,7 @@ Dialog {
 
     background: Rectangle {
         radius: 10
-        color: confirmDialog.showBg ? confirmDialog.bgColor : Kirigami.Theme.backgroundColor
+        color: confirmDialog.showBg ? confirmDialog.bgColor : UI.Theme.backgroundColor
         border.color: Qt.rgba(1, 1, 1, 0.15)
         border.width: 1
     }
@@ -41,7 +41,7 @@ Dialog {
         spacing: 12
         anchors.margins: 4
 
-        Kirigami.Icon {
+        UI.Icon {
             source: confirmDialog.pendingAction === "delete" ? "edit-delete" : (confirmDialog.pendingAction === "switch" ? "media-playback-start" : "system-reboot")
             implicitWidth: 36
             implicitHeight: 36
@@ -56,12 +56,12 @@ Dialog {
             color: confirmDialog.textColor
             font.pixelSize: confirmDialog.fpx(11)
             text: {
-                const pw = confirmDialog.usePkexec ? i18n("\n\nA password prompt will appear.") : "";
+                const pw = confirmDialog.usePkexec ? qsTr("\n\nA password prompt will appear.") : "";
                 if (confirmDialog.pendingAction === "delete")
-                    return i18n("Permanently delete generation %1?\n\nThis cannot be undone.%2").arg(confirmDialog.pendingGenNum).arg(pw);
+                    return qsTr("Permanently delete generation %1?\n\nThis cannot be undone.%2").arg(confirmDialog.pendingGenNum).arg(pw);
                 if (confirmDialog.pendingAction === "switch")
-                    return i18n("Activate generation %1 immediately?\n\nServices will be restarted to apply the new configuration. No reboot needed.%2").arg(confirmDialog.pendingGenNum).arg(pw);
-                return i18n("Boot into generation %1 on next reboot?\n\nThis updates the bootloader without changing the running session. Reboot to activate.%2").arg(confirmDialog.pendingGenNum).arg(pw);
+                    return qsTr("Activate generation %1 immediately?\n\nServices will be restarted to apply the new configuration. No reboot needed.%2").arg(confirmDialog.pendingGenNum).arg(pw);
+                return qsTr("Boot into generation %1 on next reboot?\n\nThis updates the bootloader without changing the running session. Reboot to activate.%2").arg(confirmDialog.pendingGenNum).arg(pw);
             }
         }
 
@@ -71,7 +71,7 @@ Dialog {
 
             Button {
                 Layout.fillWidth: true
-                text: i18n("Cancel")
+                text: qsTr("Cancel")
                 onClicked: confirmDialog.close()
                 background: Rectangle {
                     radius: 4
@@ -90,7 +90,7 @@ Dialog {
 
             Button {
                 Layout.fillWidth: true
-                text: confirmDialog.pendingAction === "delete" ? i18n("Delete") : (confirmDialog.pendingAction === "switch" ? i18n("Activate") : i18n("Set Next Boot"))
+                text: confirmDialog.pendingAction === "delete" ? qsTr("Delete") : (confirmDialog.pendingAction === "switch" ? qsTr("Activate") : qsTr("Set Next Boot"))
                 onClicked: {
                     confirmDialog.close();
                     confirmDialog.confirmed(confirmDialog.pendingGenNum, confirmDialog.pendingAction);

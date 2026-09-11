@@ -18,7 +18,12 @@ set -u
 FLAKE_DIR="${1:-}"
 INPUT_NAME="${2:-}"
 OVERRIDE_REF="${3:-}"
-HOSTNAME="${4:-$(hostname -s 2>/dev/null || cat /proc/sys/kernel/hostname)}"
+preview_host="${4:-auto}"
+if [[ "$preview_host" == auto ]]; then
+    preview_host=$(hostname -s 2>/dev/null || cat /proc/sys/kernel/hostname)
+elif [[ "$preview_host" == single ]]; then
+    preview_host=$(nix eval --json --no-write-lock-file "$FLAKE_DIR#nixosConfigurations" --apply builtins.attrNames | jq -er 'if length == 1 then .[0] else error("Host detection disabled: flake must have one NixOS configuration") end') || exit 1
+fi
 
 [ -z "$FLAKE_DIR" ] || [ -z "$INPUT_NAME" ] || [ -z "$OVERRIDE_REF" ] && {
     echo "ERROR: usage: dry-run-preview <flake-dir> <input-name> <override-ref> [hostname]"
@@ -46,9 +51,9 @@ while IFS= read -r storepath; do
 done < <(nix-store -q --requisites /run/current-system 2>/dev/null | grep -v '\.drv$' | sort -u)
 
 # ── Run the evaluation dry-run ────────────────────────────────────────────────
-TARGET="${FLAKE_DIR}#nixosConfigurations.${HOSTNAME}.config.system.build.toplevel"
+TARGET="${FLAKE_DIR}#nixosConfigurations.${preview_host}.config.system.build.toplevel"
 
-DRY_OUT=$(nix build --dry-run "$TARGET" \
+DRY_OUT=$(nix build --dry-run --no-write-lock-file "$TARGET" \
     --override-input "$INPUT_NAME" "$OVERRIDE_REF" \
     2>&1 1>/dev/null)
 
