@@ -1273,7 +1273,7 @@ PlasmoidItem {
     }
 
     onExpandedChanged: {
-        if (expanded) {
+        if (root.expanded) {
             if (plasmoid.configuration.autoRefreshOnOpen) {
                 refreshGenerations();
                 probeSysInfo();

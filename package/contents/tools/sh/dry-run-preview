@@ -32,11 +32,12 @@ command -v nix >/dev/null 2>&1 || { echo "ERROR: nix not on PATH"; exit 1; }
 # ── Build a name→version map of the currently running system's packages ───────
 declare -A CURRENT_VER
 while IFS= read -r storepath; do
-    # Strip leading /nix/store/<hash>-
+    # Strip leading /nix/store/<hash>-. Builtins only: this loop runs once per
+    # path in the system closure (thousands), and forking `echo | sed` per
+    # line cost ~35 s of CPU on a 5k-path closure. A store hash never contains
+    # '-', so dropping everything up to the first '-' removes exactly the hash.
     namever="${storepath##*/}"
-    namever="${namever#*-}"          # drop the hash prefix (everything up to first -)
-    # Actually sed is cleaner for the 32-char hash:
-    namever=$(echo "$storepath" | sed 's|.*/[a-z0-9]\{32\}-||')
+    namever="${namever#*-}"
     namever="${namever%.drv}"
     # Split at last numeric component: name-1.2.3 → name + 1.2.3
     if [[ "$namever" =~ ^(.+)-([0-9][^-]*)$ ]]; then
@@ -91,7 +92,7 @@ while IFS= read -r line; do
         fi
 
         # Skip system-level and meta outputs
-        echo "$pkg_name" | grep -qE "$SKIP_PATTERNS" && continue
+        [[ "$pkg_name" =~ $SKIP_PATTERNS ]] && continue
 
         old_ver="${CURRENT_VER[$pkg_name]:-}"
 

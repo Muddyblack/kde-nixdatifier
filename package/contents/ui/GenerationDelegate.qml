@@ -113,6 +113,7 @@ Item {
         border.width: 1
 
         Rectangle {
+            id: bootedPulse
             anchors.centerIn: parent
             width: 20
             height: 20
@@ -828,7 +829,7 @@ Item {
 
                     // Count badge
                     Rectangle {
-                        visible: genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].diff.length > 0
+                        visible: !!(genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].diff.length > 0)
                         height: 16
                         width: cntLbl.implicitWidth + 10
                         radius: 8
@@ -886,7 +887,7 @@ Item {
 
                     // Filter input
                     Rectangle {
-                        visible: genDelegate.diffFilterEnabled && genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].diff.length > 0
+                        visible: !!(genDelegate.diffFilterEnabled && genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].diff.length > 0)
                         height: 18
                         width: 110
                         radius: 4

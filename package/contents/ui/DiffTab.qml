@@ -91,7 +91,7 @@ Item {
                         leftMargin: 8
                         rightMargin: 2
                     }
-                    text: diffTab.generations.length > pickerA.selectedIndex ? "#" + diffTab.generations[pickerA.selectedIndex].number : "—"
+                    text: pickerA.selectedIndex >= 0 && diffTab.generations.length > pickerA.selectedIndex ? "#" + diffTab.generations[pickerA.selectedIndex].number : "—"
                     color: diffTab.textColor
                     font.pixelSize: diffTab.fpx(9)
                     font.bold: true
@@ -196,7 +196,9 @@ Item {
                 property bool open: false
 
                 onSelectedIndexChanged: {
-                    if (diffTab.generations.length > selectedIndex)
+                    // selectedIndex is -1 while the list is empty, and
+                    // `length > -1` alone would still read generations[-1].
+                    if (selectedIndex >= 0 && diffTab.generations.length > selectedIndex)
                         diffTab.genB = diffTab.generations[selectedIndex].number;
                 }
 
@@ -220,7 +222,7 @@ Item {
                         leftMargin: 8
                         rightMargin: 2
                     }
-                    text: diffTab.generations.length > pickerB.selectedIndex ? "#" + diffTab.generations[pickerB.selectedIndex].number : "—"
+                    text: pickerB.selectedIndex >= 0 && diffTab.generations.length > pickerB.selectedIndex ? "#" + diffTab.generations[pickerB.selectedIndex].number : "—"
                     color: diffTab.textColor
                     font.pixelSize: diffTab.fpx(9)
                     font.bold: true

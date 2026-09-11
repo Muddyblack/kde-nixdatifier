@@ -256,13 +256,15 @@ Item {
                         Layout.alignment: Qt.AlignRight
                     }
 
-                    MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        ToolTip.text: i18n("/nix/store: %1\nReclaimable via GC: %2\n/nix free space: %3").arg(fullView.formatBytes(fullView.diskStoreBytes)).arg(fullView.formatBytes(fullView.diskReclaimableBytes)).arg(fullView.formatBytes(fullView.diskFreeBytes))
-                        ToolTip.visible: containsMouse
-                        ToolTip.delay: 400
+                    // A HoverHandler rather than a MouseArea: it is not an Item,
+                    // so the layout does not try to manage it, and it needs no
+                    // anchors to cover the whole column.
+                    HoverHandler {
+                        id: poolHover
                     }
+                    ToolTip.text: i18n("/nix/store: %1\nReclaimable via GC: %2\n/nix free space: %3").arg(fullView.formatBytes(fullView.diskStoreBytes)).arg(fullView.formatBytes(fullView.diskReclaimableBytes)).arg(fullView.formatBytes(fullView.diskFreeBytes))
+                    ToolTip.visible: poolHover.hovered
+                    ToolTip.delay: 400
                 }
             }
 
