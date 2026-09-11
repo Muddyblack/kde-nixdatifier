@@ -1,11 +1,15 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "shared" as UI
 import "components"
 
 Item {
     id: genDelegate
+    property var storePathCache: ({})
+    property var changeCounts: null
+    property date referenceDate: new Date()
+    signal storePathRequested(var pkg)
 
     property var gen: ({})
     // See FullView.uiActive — false while the popup is closed.
@@ -18,7 +22,6 @@ Item {
     property bool isLoadingDetails: false
     property bool isBusy: false
     property var detailsCache: ({})
-    property string diffFilter: ""
     property string diffMode: "booted"
     property bool showDeleteButton: false
     property bool diffFilterEnabled: true
@@ -27,6 +30,11 @@ Item {
     property var metaCache: ({})
     property bool showPackageIcons: true
     property string iconStyle: "colored"
+    property bool enableLiveSwitch: true
+    property bool enableGlow: true
+    property bool enableMotion: true
+    property string diffViewMode: "compact"
+    signal geometryChanged
     // Full generations list, used to populate the right-click "Compare with…" menu.
     property var allGenerations: []
     property var configDiffCache: ({})
@@ -35,7 +43,6 @@ Item {
     signal collapseGen
     signal requestAction(int genNum, string action)
     signal diffModeToggle(int genNum)
-    signal filterChanged(string text)
     signal copyToClipboard(string text)
     signal compareWithRequested(int genA, int genB)
 
@@ -43,1042 +50,416 @@ Item {
         return Qt.resolvedUrl("assets/" + name + ".svg");
     }
 
-    function formatBytes(bytes) {
-        if (!bytes || bytes <= 0)
-            return "";
-        const units = ["B", "KB", "MB", "GB", "TB"];
-        let i = 0, v = bytes;
-        while (v >= 1024 && i < units.length - 1) {
-            v /= 1024;
-            i++;
-        }
-        return (i >= 3 ? v.toFixed(1) : Math.round(v)) + " " + units[i];
-    }
-
-    // Theme-aware font sizing. Legacy hardcoded sizes were tuned against a 9px base,
-    // so divide by 9 to convert legacy values into multipliers of the system small font.
-    readonly property int baseFontPx: Kirigami.Theme.smallFont.pixelSize
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * baseFontPx * fs));
+        return UI.Theme.fontPx(n, fs);
     }
 
-    readonly property bool isExpanded: gen.number === genDelegate.selectedGenNum
-    readonly property bool isCurrent: gen.booted || gen.active
-    readonly property int headerH: 40
-    readonly property color statusColor: gen.booted ? "#3ddc84" : (gen.active ? "#ffb74d" : Qt.rgba(1, 1, 1, 0.22))
-
-    // Expanded height breakdown (all px):
-    //   2 dividers(1+1) + meta strip(~26) + diff header(22) = 50 fixed items
-    //   ColumnLayout spacing: 4 gaps × 4 = 16
-    //   expandPanel bottomMargin: 4
-    //   → non-list overhead: 70; use 78 to leave an 8px buffer for font-scale variance
-    property int diffContentH: 0
-    readonly property int listH: Math.max(50, Math.min(270, diffContentH + 8))
-    readonly property var configDiffData: configDiffCache[gen.number] || null
-    // Show config diff section for any resolved status except "missing" (= not yet configured).
-    readonly property bool showConfigDiff: configDiffData !== null && configDiffData.status !== "missing"
-    // Fixed heights: header row 20px, diff list 110px, status line 18px.
-    readonly property int configDiffSectionH: !showConfigDiff ? 0 : (configDiffData.status === "ok" && configDiffData.diff ? 20 + 110 : 20 + 18)
-    readonly property int expandedExtra: 78 + listH + (showConfigDiff ? 4 + configDiffSectionH : 0)
-    height: isExpanded ? headerH + expandedExtra : headerH
-    Behavior on height {
-        NumberAnimation {
-            duration: 220
-            easing.type: Easing.InOutCubic
-        }
+    function friendlyTimestamp(value, now) {
+        const m = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
+        if (!m)
+            return value || "";
+        const date = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]));
+        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+        const time = Qt.formatTime(date, "hh:mm");
+        if (date >= today && date < new Date(today.getFullYear(), today.getMonth(), today.getDate() + 1))
+            return qsTr("Today, %1").arg(time);
+        if (date >= yesterday && date < today)
+            return qsTr("Yesterday, %1").arg(time);
+        return Qt.formatDateTime(date, date.getFullYear() === now.getFullYear() ? "dd MMM, hh:mm" : "dd MMM yyyy, hh:mm");
     }
 
-    // ── Timeline rail — shares the same left edge as the card left margin ──────
+    readonly property bool isExpanded: gen.number === selectedGenNum
+    readonly property var details: detailsCache[gen.number] || ({})
+    readonly property var changeSummary: {
+        if (changeCounts && changeCounts.status === "ok")
+            return changeCounts;
+        if (details.partial || !Array.isArray(details.diff) || (details.diffMode === "booted" && !gen.booted))
+            return null;
+        return {
+            added: details.diff.filter(p => p.type === "added").length,
+            removed: details.diff.filter(p => p.type === "removed").length,
+            changed: details.diff.filter(p => p.type !== "added" && p.type !== "removed").length
+        };
+    }
+    readonly property var configDiff: configDiffCache[gen.number] || ({})
+    readonly property real headerH: Math.max(80 * fs, headerContents.implicitHeight + 16 * fs)
+    readonly property bool compactActions: generationHeader.width < 420 * fs
+    readonly property real nodeX: 14
+    readonly property real nodeY: 8 * fs + headerTopRow.height / 2
+    readonly property string kernelLabel: {
+        const value = details.kernelVer || "";
+        if (!value)
+            return "";
+        const version = value.match(/(\d+\.\d+(?:\.\d+)?(?:[-+][^\s]*)?)$/);
+        if (/cachyos/i.test(value))
+            return "CachyOS" + (version ? " " + version[1] : "");
+        return version ? "Linux " + version[1] : value;
+    }
+    readonly property string releaseLabel: {
+        const value = details.nixosVer || "";
+        if (!value)
+            return "";
+        const release = value.match(/^\d{2}\.\d{2}/);
+        const date = value.match(/(\d{4})-?(\d{2})-?(\d{2})/);
+        const day = date ? Qt.formatDate(new Date(Number(date[1]), Number(date[2]) - 1, Number(date[3])), "dd MMM") : "";
+        return "NixOS " + (release ? release[0] : value) + (release && day ? " · " + day : "");
+    }
+    readonly property color statusColor: gen.booted ? UI.Theme.positive : gen.active ? UI.Theme.changed : timelineColor
+    implicitHeight: headerH + (isExpanded ? expandedColumn.implicitHeight + 20 : 0)
+    height: implicitHeight
+    onHeightChanged: geometryChanged()
+    onYChanged: geometryChanged()
     Rectangle {
-        anchors.left: parent.left
-        anchors.leftMargin: 14
-        anchors.top: parent.top
-        anchors.bottom: parent.bottom
-        width: 2
-        color: genDelegate.isCurrent ? Qt.rgba(genDelegate.statusColor.r, genDelegate.statusColor.g, genDelegate.statusColor.b, 0.55) : Qt.rgba(genDelegate.timelineColor.r, genDelegate.timelineColor.g, genDelegate.timelineColor.b, 0.18)
-    }
-
-    // ── Node dot ──────────────────────────────────────────────────────────────
-    Rectangle {
-        id: nodeDot
-        anchors.left: parent.left
-        anchors.leftMargin: 10
-        anchors.top: parent.top
-        anchors.topMargin: Math.round((genDelegate.headerH - 10) / 2)
-        width: 10
-        height: 10
-        radius: 5
-        color: genDelegate.isCurrent ? genDelegate.statusColor : Qt.rgba(genDelegate.timelineColor.r, genDelegate.timelineColor.g, genDelegate.timelineColor.b, 0.55)
-        border.color: Qt.rgba(0, 0, 0, 0.3)
-        border.width: 1
-
+        x: genDelegate.nodeX - 4
+        y: genDelegate.nodeY - 4
+        width: 8
+        height: 8
+        radius: 4
+        color: genDelegate.statusColor
         Rectangle {
-            id: bootedPulse
             anchors.centerIn: parent
-            width: 20
-            height: 20
-            radius: 10
+            width: 18
+            height: 18
+            radius: 9
             color: "transparent"
-            border.color: nodeDot.color
-            border.width: 1.5
-            visible: gen.booted
-            // Gated on both the ring's own visibility and uiActive. Without a
-            // `running` binding this pulse ran for the entire life of the
-            // widget — including while the popup was closed and while the ring
-            // was hidden — keeping the animation driver awake and forcing a
-            // repaint every frame for a dot nobody could see.
-            SequentialAnimation on opacity {
-                running: bootedPulse.visible && genDelegate.uiActive
-                loops: Animation.Infinite
-                NumberAnimation {
-                    from: 0.75
-                    to: 0.10
-                    duration: 1600
-                    easing.type: Easing.InOutSine
-                }
-                NumberAnimation {
-                    from: 0.10
-                    to: 0.75
-                    duration: 1600
-                    easing.type: Easing.InOutSine
-                }
-            }
+            border.color: UI.Theme.wash(genDelegate.statusColor, .65)
+            visible: genDelegate.gen.booted && genDelegate.enableGlow
         }
     }
-
-    // ── Card ──────────────────────────────────────────────────────────────────
     Rectangle {
-        id: card
-        anchors {
-            left: parent.left
-            leftMargin: 30
-            right: parent.right
-            rightMargin: 4
-            top: parent.top
-            topMargin: 2
-            bottom: parent.bottom
-            bottomMargin: 2
-        }
-        radius: 7
-        color: genDelegate.isExpanded ? Qt.rgba(0, 0, 0, 0.28) : "transparent"
-        clip: true
-        Behavior on color {
-            ColorAnimation {
-                duration: 130
-            }
-        }
-
-        // Expanded border: top / right / bottom only.
-        // Left side is intentionally open — the timeline rail serves as the left edge.
-        readonly property color expandBorderColor: Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.30)
-        Rectangle {
-            visible: genDelegate.isExpanded
-            anchors {
-                top: parent.top
-                left: parent.left
-                right: parent.right
-            }
-            height: 1
-            color: card.expandBorderColor
-            Behavior on color {
-                ColorAnimation {
-                    duration: 130
-                }
-            }
-        }
-        Rectangle {
-            visible: genDelegate.isExpanded
-            anchors {
-                top: parent.top
-                right: parent.right
-                bottom: parent.bottom
-            }
-            width: 1
-            color: card.expandBorderColor
-        }
-        Rectangle {
-            visible: genDelegate.isExpanded
-            anchors {
-                bottom: parent.bottom
-                left: parent.left
-                right: parent.right
-            }
-            height: 1
-            color: card.expandBorderColor
-        }
-
+        x: 30
+        width: Math.max(0, parent.width - 36)
+        height: parent.height - 4
+        radius: 10
+        color: genDelegate.isExpanded ? UI.Theme.wash(genDelegate.accentColor, .055) : hover.hovered ? "#08ffffff" : "transparent"
+        border.color: genDelegate.isExpanded ? UI.Theme.wash(genDelegate.accentColor, .2) : "transparent"
+    }
+    HoverHandler {
+        id: hover
+    }
+    Item {
+        id: generationHeader
+        x: 39
+        width: Math.max(0, parent.width - 50)
+        height: genDelegate.headerH
+        // Under the content so action buttons get their own clicks.
         MouseArea {
-            id: cardHover
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: parent.top
-            }
-            height: genDelegate.headerH
-            hoverEnabled: false
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
             acceptedButtons: Qt.LeftButton | Qt.RightButton
             onClicked: mouse => {
                 if (mouse.button === Qt.RightButton) {
-                    compareMenu.popup();
+                    generationMenu.popup();
                     return;
                 }
-                if (genDelegate.selectedGenNum === gen.number)
+                const p = mapToItem(headerActions, mouse.x, mouse.y);
+                if (headerActions.visible && p.x >= 0 && p.x <= headerActions.width && p.y >= 0 && p.y <= headerActions.height)
+                    return;
+                if (genDelegate.isExpanded)
                     genDelegate.collapseGen();
                 else
-                    genDelegate.selectGen(gen.number);
+                    genDelegate.selectGen(genDelegate.gen.number);
             }
         }
-
-        // Right-click → Compare with… menu.
-        // Lists up to 12 nearby generations (skips the current one).
-        Menu {
-            id: compareMenu
-            Repeater {
-                model: {
-                    if (!genDelegate.allGenerations || genDelegate.allGenerations.length === 0)
-                        return [];
-                    const others = genDelegate.allGenerations.filter(g => g.number !== gen.number);
-                    return others.slice(0, 12);
-                }
-                MenuItem {
-                    required property var modelData
-                    text: {
-                        const g = modelData;
-                        const d = genDelegate.detailsCache[g.number];
-                        const ver = d && d.nixosVer ? "  ·  " + d.nixosVer : "";
-                        const flag = g.booted ? "  [booted]" : (g.active ? "  [next]" : "");
-                        return i18n("Compare with #%1").arg(g.number) + ver + flag;
-                    }
-                    onTriggered: genDelegate.compareWithRequested(gen.number, modelData.number)
-                }
-            }
-            MenuSeparator {}
-            MenuItem {
-                text: i18n("Copy generation number")
-                icon.name: "edit-copy"
-                onTriggered: genDelegate.copyToClipboard("#" + gen.number)
-            }
-        }
-
-        // ── Header row ────────────────────────────────────────────────────────
-        RowLayout {
-            id: headerRow
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: parent.top
-            }
-            anchors.leftMargin: 10
-            anchors.rightMargin: 6
-            height: genDelegate.headerH
-            spacing: 6
-
-            // Gen number
-            Text {
-                text: "#" + gen.number
-                color: genDelegate.isCurrent ? genDelegate.statusColor : genDelegate.textColor
-                font.pixelSize: genDelegate.fpx(12)
-                font.bold: true
-                opacity: genDelegate.isCurrent ? 1.0 : 0.88
-            }
-
-            // Timestamp
-            Text {
-                text: gen.timestamp
-                color: genDelegate.textColor
-                opacity: 0.35
-                font.pixelSize: genDelegate.fpx(8)
-                font.family: Kirigami.Theme.fixedWidthFont.family
-                elide: Text.ElideRight
-            }
-
-            // Kernel version chip (collapsed only — meta strip shows full info when expanded)
-            Rectangle {
-                readonly property string kver: genDelegate.detailsCache[gen.number] ? genDelegate.detailsCache[gen.number].kernelVer : ""
-                visible: !genDelegate.isExpanded && kver !== "" && kver !== "—"
-                implicitWidth: headerKernelTxt.implicitWidth + 8
-                height: 15
-                radius: 3
-                color: Qt.rgba(0.52, 0.80, 0.92, 0.09)
-                border.color: Qt.rgba(0.52, 0.80, 0.92, 0.28)
-                border.width: 1
-                Text {
-                    id: headerKernelTxt
-                    anchors.centerIn: parent
-                    text: parent.kver
-                    color: Qt.rgba(0.52, 0.80, 0.92, 0.85)
-                    font.pixelSize: genDelegate.fpx(7)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
-                }
-            }
-
-            // NixOS version chip (collapsed only — meta strip shows full info when expanded)
-            Rectangle {
-                readonly property string nver: genDelegate.detailsCache[gen.number] ? genDelegate.detailsCache[gen.number].nixosVer : ""
-                visible: !genDelegate.isExpanded && nver !== ""
-                implicitWidth: headerNixosTxt.implicitWidth + 8
-                height: 15
-                radius: 3
-                color: Qt.rgba(0.30, 0.69, 0.93, 0.09)
-                border.color: Qt.rgba(0.30, 0.69, 0.93, 0.22)
-                border.width: 1
-                Text {
-                    id: headerNixosTxt
-                    anchors.centerIn: parent
-                    text: {
-                        const v = parent.nver;
-                        // Shorten "25.11.20260518.abc1234" → "25.11.2026-05-18"
-                        const m = v.match(/^(\d+\.\d+)\.(\d{4})(\d{2})(\d{2})\./);
-                        return m ? m[1] + " · " + m[2] + "-" + m[3] + "-" + m[4] : v;
-                    }
-                    color: Qt.rgba(0.30, 0.69, 0.93, 0.75)
-                    font.pixelSize: genDelegate.fpx(7)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
-                    elide: Text.ElideRight
-                    maximumLineCount: 1
-                }
-            }
-
-            Item {
-                Layout.fillWidth: true
-            }
-
-            // Loading spinner (visible while details load)
-            Kirigami.Icon {
-                id: detailsSpinner
-                source: Qt.resolvedUrl("nixos-logo.svg")
-                isMask: genDelegate.iconStyle !== "colored"
-                color: {
-                    if (genDelegate.iconStyle === "white")
-                        return "#ffffff";
-                    if (genDelegate.iconStyle === "black")
-                        return "#000000";
-                    return genDelegate.accentColor;
-                }
-                visible: genDelegate.isLoadingDetails && genDelegate.isExpanded && !genDelegate.detailsCache[gen.number]
-                implicitWidth: 18
-                implicitHeight: 18
-                RotationAnimation on rotation {
-                    running: detailsSpinner.visible && genDelegate.uiActive
-                    from: 0
-                    to: 360
-                    duration: 1200
-                    loops: Animation.Infinite
-                }
-            }
-
-            // Status pill
-            Rectangle {
-                readonly property string label: gen.booted && gen.active ? i18n("ACTIVE") : (gen.booted ? i18n("BOOTED") : (gen.active ? i18n("NEXT BOOT") : ""))
-                visible: label !== ""
-                radius: 4
-                height: 17
-                width: pillTxt.implicitWidth + 12
-                color: Qt.rgba(genDelegate.statusColor.r, genDelegate.statusColor.g, genDelegate.statusColor.b, 0.14)
-                border.color: Qt.rgba(genDelegate.statusColor.r, genDelegate.statusColor.g, genDelegate.statusColor.b, 0.65)
-                border.width: 1
-                Text {
-                    id: pillTxt
-                    anchors.centerIn: parent
-                    text: parent.label
-                    color: genDelegate.statusColor
-                    font.pixelSize: genDelegate.fpx(7)
-                    font.bold: true
-                    font.letterSpacing: 0.6
-                }
-            }
-
-            // Action pill buttons — right-aligned, visible when expanded
+        ColumnLayout {
+            id: headerContents
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: 8 * genDelegate.fs
+            spacing: 5 * genDelegate.fs
             RowLayout {
-                visible: genDelegate.isExpanded
-                spacing: 4
-
-                // Activate / Switch button
+                id: headerTopRow
+                Layout.fillWidth: true
+                spacing: 7
+                Text {
+                    text: "#" + genDelegate.gen.number
+                    color: genDelegate.gen.booted || genDelegate.gen.active ? genDelegate.statusColor : genDelegate.textColor
+                    font.pixelSize: 12 * genDelegate.fs
+                    font.weight: Font.Medium
+                }
                 Rectangle {
-                    id: actBtn
-                    property bool clickable: !gen.booted && !gen.active && !genDelegate.isBusy
-                    property bool isCurrentBooted: gen.booted && gen.active
-                    visible: true
-                    implicitWidth: actBtnRow.implicitWidth + 16
-                    height: 22
-                    radius: 5
-                    color: actMa.containsMouse && clickable ? Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.28) : Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, clickable ? 0.10 : 0.04)
-                    border.color: clickable ? Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, actMa.containsMouse ? 0.70 : 0.40) : Qt.rgba(1, 1, 1, 0.08)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 100
-                        }
-                    }
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 100
-                        }
-                    }
-
-                    RowLayout {
-                        id: actBtnRow
+                    visible: genDelegate.gen.booted || genDelegate.gen.active
+                    implicitWidth: statusLabel.implicitWidth + 12
+                    implicitHeight: statusLabel.implicitHeight + 6
+                    radius: 4
+                    color: UI.Theme.wash(genDelegate.statusColor, .1)
+                    Text {
+                        id: statusLabel
                         anchors.centerIn: parent
-                        spacing: 4
-                        Kirigami.Icon {
-                            source: gen.booted && gen.active ? genDelegate.svg("ic_check") : (gen.active ? genDelegate.svg("ic_boot") : genDelegate.svg("ic_activate"))
-                            implicitWidth: 11
-                            implicitHeight: 11
-                            isMask: true
-                            color: actBtn.clickable ? genDelegate.accentColor : Qt.rgba(1, 1, 1, 0.30)
-                        }
-                        Text {
-                            text: gen.booted && gen.active ? i18n("active") : (gen.active ? i18n("next boot") : i18n("activate"))
-                            color: actBtn.clickable ? genDelegate.accentColor : Qt.rgba(1, 1, 1, 0.30)
-                            font.pixelSize: genDelegate.fpx(8)
-                            font.bold: true
-                        }
-                    }
-                    MouseArea {
-                        id: actMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        enabled: actBtn.clickable
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: genDelegate.requestAction(gen.number, "switch")
-                        ToolTip.text: gen.booted && gen.active ? i18n("Currently booted & active") : (gen.active ? i18n("Reboot to apply") : i18n("Activate now (live switch)"))
-                        ToolTip.visible: containsMouse
-                        ToolTip.delay: 400
+                        text: genDelegate.gen.booted ? qsTr("Booted") : qsTr("Next boot")
+                        color: genDelegate.statusColor
+                        font.pixelSize: 9 * genDelegate.fs
                     }
                 }
-
-                // Next boot button
-                Rectangle {
-                    visible: !gen.booted && !gen.active
-                    implicitWidth: nbBtnRow.implicitWidth + 16
-                    height: 22
-                    radius: 5
-                    color: nbMa.containsMouse && !genDelegate.isBusy ? Qt.rgba(0.55, 0.45, 1, 0.28) : Qt.rgba(0.55, 0.45, 1, 0.08)
-                    border.color: Qt.rgba(0.55, 0.45, 1, nbMa.containsMouse ? 0.65 : 0.38)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 100
-                        }
-                    }
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 100
-                        }
-                    }
-
-                    RowLayout {
-                        id: nbBtnRow
-                        anchors.centerIn: parent
-                        spacing: 4
-                        Kirigami.Icon {
-                            source: genDelegate.svg("ic_nextboot")
-                            implicitWidth: 11
-                            implicitHeight: 11
-                            isMask: true
-                            color: Qt.rgba(0.70, 0.60, 1, 0.90)
-                        }
-                        Text {
-                            text: i18n("set boot")
-                            color: Qt.rgba(0.70, 0.60, 1, 0.90)
-                            font.pixelSize: genDelegate.fpx(8)
-                            font.bold: true
-                        }
-                    }
-                    MouseArea {
-                        id: nbMa
-                        anchors.fill: parent
-                        hoverEnabled: true
+                Item {
+                    Layout.fillWidth: true
+                }
+                RowLayout {
+                    id: headerActions
+                    visible: genDelegate.isExpanded
+                    spacing: 5
+                    UI.ActionButton {
+                        objectName: "activate-" + genDelegate.gen.number
+                        visible: genDelegate.enableLiveSwitch
+                        text: genDelegate.compactActions ? "" : qsTr("Activate")
+                        glyph: genDelegate.svg("ic_activate")
+                        tip: qsTr("Activate generation #%1 now").arg(genDelegate.gen.number)
+                        primary: true
+                        accent: genDelegate.accentColor
+                        implicitHeight: 25 * genDelegate.fs
+                        font.pixelSize: 9 * genDelegate.fs
                         enabled: !genDelegate.isBusy
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: genDelegate.requestAction(gen.number, "rollback")
-                        ToolTip.text: i18n("Set as boot target without activating now.")
-                        ToolTip.visible: containsMouse
-                        ToolTip.delay: 400
+                        onClicked: genDelegate.requestAction(genDelegate.gen.number, "switch")
+                    }
+                    UI.ActionButton {
+                        objectName: "setBoot-" + genDelegate.gen.number
+                        text: genDelegate.compactActions ? "" : qsTr("Set boot")
+                        glyph: genDelegate.svg("ic_nextboot")
+                        tip: qsTr("Use generation #%1 on next boot").arg(genDelegate.gen.number)
+                        primary: true
+                        accent: UI.Theme.changed
+                        implicitHeight: 25 * genDelegate.fs
+                        font.pixelSize: 9 * genDelegate.fs
+                        enabled: !genDelegate.isBusy
+                        onClicked: genDelegate.requestAction(genDelegate.gen.number, "rollback")
+                    }
+                    UI.ActionButton {
+                        objectName: "delete-" + genDelegate.gen.number
+                        visible: genDelegate.showDeleteButton
+                        text: genDelegate.compactActions ? "" : qsTr("Delete")
+                        glyph: genDelegate.svg("ic_delete")
+                        tip: genDelegate.gen.active || genDelegate.gen.booted ? qsTr("The booted and next-boot generations are protected") : qsTr("Delete generation #%1").arg(genDelegate.gen.number)
+                        primary: true
+                        accent: UI.Theme.negative
+                        implicitHeight: 25 * genDelegate.fs
+                        font.pixelSize: 9 * genDelegate.fs
+                        enabled: !genDelegate.isBusy && !genDelegate.gen.active && !genDelegate.gen.booted
+                        onClicked: genDelegate.requestAction(genDelegate.gen.number, "delete")
                     }
                 }
-
-                // Delete button
-                Rectangle {
-                    visible: genDelegate.showDeleteButton && !gen.active && !gen.booted
-                    implicitWidth: delBtnRow.implicitWidth + 16
-                    height: 22
-                    radius: 5
-                    color: delMa.containsMouse && !genDelegate.isBusy ? Qt.rgba(1, 0.25, 0.25, 0.28) : Qt.rgba(1, 0.25, 0.25, 0.07)
-                    border.color: Qt.rgba(1, 0.35, 0.35, delMa.containsMouse ? 0.70 : 0.42)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 100
-                        }
+                Row {
+                    objectName: "generationChanges-" + genDelegate.gen.number
+                    visible: !genDelegate.isExpanded || generationHeader.width > 480 * genDelegate.fs
+                    spacing: 6
+                    Text {
+                        visible: !genDelegate.changeSummary
+                        text: genDelegate.changeCounts && genDelegate.changeCounts.status === "loading" ? "…" : "—"
+                        color: UI.Theme.muted
+                        font.pixelSize: 10 * genDelegate.fs
                     }
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 100
-                        }
-                    }
-
-                    RowLayout {
-                        id: delBtnRow
-                        anchors.centerIn: parent
-                        spacing: 4
-                        Kirigami.Icon {
-                            source: genDelegate.svg("ic_delete")
-                            implicitWidth: 11
-                            implicitHeight: 11
-                            isMask: true
-                            color: "#ff6b6b"
-                        }
+                    Repeater {
+                        model: genDelegate.changeSummary ? [
+                            {
+                                text: "+" + genDelegate.changeSummary.added,
+                                color: UI.Theme.positive
+                            },
+                            {
+                                text: "−" + genDelegate.changeSummary.removed,
+                                color: UI.Theme.negative
+                            },
+                            {
+                                text: "~" + genDelegate.changeSummary.changed,
+                                color: UI.Theme.changed
+                            }
+                        ] : []
                         Text {
-                            text: i18n("delete")
-                            color: "#ff6b6b"
-                            font.pixelSize: genDelegate.fpx(8)
-                            font.bold: true
+                            required property var modelData
+                            text: modelData.text
+                            color: modelData.color
+                            font.pixelSize: 9 * genDelegate.fs
                         }
                     }
-                    MouseArea {
-                        id: delMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        enabled: !genDelegate.isBusy
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: genDelegate.requestAction(gen.number, "delete")
-                        ToolTip.text: i18n("Delete generation %1 permanently").arg(gen.number)
-                        ToolTip.visible: containsMouse
-                        ToolTip.delay: 400
+                    HoverHandler {
+                        id: countsHover
                     }
+                    ToolTip.visible: countsHover.hovered
+                    ToolTip.text: genDelegate.changeSummary ? qsTr("Changes from the previous generation: %1 added, %2 removed, %3 changed").arg(genDelegate.changeSummary.added).arg(genDelegate.changeSummary.removed).arg(genDelegate.changeSummary.changed) : qsTr("Package counts are not available yet")
+                }
+                UI.DisclosureButton {
+                    objectName: "toggleGeneration-" + genDelegate.gen.number
+                    expanded: genDelegate.isExpanded
+                    enableMotion: genDelegate.uiActive && genDelegate.enableMotion
+                    implicitHeight: 25 * genDelegate.fs
+                    tip: genDelegate.isExpanded ? qsTr("Collapse generation #%1").arg(genDelegate.gen.number) : qsTr("Expand generation #%1").arg(genDelegate.gen.number)
+                    onClicked: genDelegate.isExpanded ? genDelegate.collapseGen() : genDelegate.selectGen(genDelegate.gen.number)
                 }
             }
-
-            // Chevron — sole expand/collapse trigger
-            Rectangle {
-                implicitWidth: 22
-                implicitHeight: 22
-                radius: 4
-                color: chevronMa.containsMouse ? Qt.rgba(1, 1, 1, 0.08) : "transparent"
-                Behavior on color {
-                    ColorAnimation {
-                        duration: 100
-                    }
+            Text {
+                Layout.fillWidth: true
+                objectName: "generationDate-" + genDelegate.gen.number
+                text: genDelegate.friendlyTimestamp(genDelegate.gen.timestamp, genDelegate.referenceDate)
+                color: UI.Theme.muted
+                font.pixelSize: 10 * genDelegate.fs
+                elide: Text.ElideRight
+                HoverHandler {
+                    id: dateHover
                 }
-
-                Kirigami.Icon {
-                    anchors.centerIn: parent
-                    source: genDelegate.isExpanded ? genDelegate.svg("ic_chevron_up") : genDelegate.svg("ic_chevron_down")
-                    implicitWidth: 14
-                    implicitHeight: 14
-                    isMask: true
-                    color: genDelegate.isExpanded ? genDelegate.accentColor : genDelegate.textColor
-                    opacity: genDelegate.isExpanded ? 0.85 : (chevronMa.containsMouse ? 0.65 : 0.28)
-                    Behavior on opacity {
-                        NumberAnimation {
-                            duration: 120
+                ToolTip.visible: dateHover.hovered
+                ToolTip.text: genDelegate.gen.timestamp || ""
+            }
+            Flow {
+                Layout.fillWidth: true
+                spacing: 6
+                Repeater {
+                    model: [
+                        {
+                            label: genDelegate.kernelLabel,
+                            value: genDelegate.details.kernelVer || "",
+                            kind: "kernel"
+                        },
+                        {
+                            label: genDelegate.releaseLabel,
+                            value: genDelegate.details.nixosVer || "",
+                            kind: "nixos"
                         }
-                    }
-                }
-
-                MouseArea {
-                    id: chevronMa
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        if (genDelegate.selectedGenNum === gen.number)
-                            genDelegate.collapseGen();
-                        else
-                            genDelegate.selectGen(gen.number);
+                    ]
+                    Rectangle {
+                        id: spec
+                        required property var modelData
+                        objectName: modelData.kind + "Badge-" + genDelegate.gen.number
+                        visible: modelData.value !== ""
+                        width: Math.min(generationHeader.width, specLabel.implicitWidth + 16)
+                        height: 23 * genDelegate.fs
+                        color: "#0991bcff"
+                        border.color: "#1491bcff"
+                        radius: 5
+                        Text {
+                            id: specLabel
+                            anchors.fill: parent
+                            anchors.leftMargin: 8
+                            anchors.rightMargin: 8
+                            text: spec.modelData.label
+                            textFormat: Text.PlainText
+                            color: "#c7d6e8"
+                            font.pixelSize: 10 * genDelegate.fs
+                            verticalAlignment: Text.AlignVCenter
+                            elide: Text.ElideRight
+                        }
+                        Accessible.role: Accessible.StaticText
+                        Accessible.name: modelData.kind === "kernel" ? qsTr("Kernel: %1").arg(modelData.value) : "NixOS " + modelData.value
+                        HoverHandler {
+                            id: specHover
+                        }
+                        ToolTip.visible: specHover.hovered
+                        ToolTip.text: modelData.value
+                        ToolTip.delay: 450
                     }
                 }
             }
         }
-
-        // ── Expanded panel ────────────────────────────────────────────────────
-        Item {
-            id: expandPanel
-            visible: genDelegate.isExpanded
-            opacity: genDelegate.isExpanded ? 1.0 : 0.0
-            Behavior on opacity {
-                NumberAnimation {
-                    duration: 180
-                }
+        Accessible.role: Accessible.Button
+        Accessible.name: qsTr("Generation %1").arg(genDelegate.gen.number)
+        Accessible.onPressAction: genDelegate.isExpanded ? genDelegate.collapseGen() : genDelegate.selectGen(genDelegate.gen.number)
+    }
+    ColumnLayout {
+        id: expandedColumn
+        x: 40
+        y: genDelegate.headerH
+        width: Math.max(0, parent.width - 52)
+        visible: genDelegate.isExpanded
+        spacing: 10
+        Text {
+            visible: genDelegate.isLoadingDetails && (!genDelegate.details.diff || !!genDelegate.details.partial)
+            text: qsTr("Loading generation details…")
+            color: genDelegate.accentColor
+            font.pixelSize: genDelegate.fpx(9)
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            Text {
+                Layout.fillWidth: true
+                text: genDelegate.details.closureBytes ? qsTr("Closure size: %1").arg(UI.Theme.formatBytes(genDelegate.details.closureBytes)) : ""
+                color: UI.Theme.muted
+                font.pixelSize: genDelegate.fpx(8)
             }
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: headerRow.bottom
-                bottom: parent.bottom
-                leftMargin: 10
-                rightMargin: 6
-                bottomMargin: 4
+            UI.ActionButton {
+                text: genDelegate.diffMode === "prev" ? qsTr("vs. previous") : qsTr("vs. booted")
+                tip: qsTr("Change comparison baseline")
+                onClicked: genDelegate.diffModeToggle(genDelegate.gen.number)
             }
-
-            ColumnLayout {
-                anchors.fill: parent
-                spacing: 4
-
-                // Thin divider
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Qt.rgba(1, 1, 1, 0.07)
-                }
-
-                // ── Compact meta strip — visually separated background block ──
-                Rectangle {
-                    Layout.fillWidth: true
-                    implicitHeight: metaStripRow.implicitHeight + 10
-                    radius: 5
-                    color: Qt.rgba(1, 1, 1, 0.04)
-
-                    RowLayout {
-                        id: metaStripRow
-                        anchors {
-                            fill: parent
-                            leftMargin: 8
-                            rightMargin: 8
-                            topMargin: 5
-                            bottomMargin: 5
-                        }
-                        spacing: 10
-
-                        // Kernel value badge
-                        RowLayout {
-                            spacing: 4
-                            Text {
-                                text: i18n("kernel")
-                                color: genDelegate.textColor
-                                opacity: 0.28
-                                font.pixelSize: genDelegate.fpx(7)
-                                font.bold: true
-                                font.letterSpacing: 0.4
-                            }
-                            Rectangle {
-                                visible: !!(genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].kernelVer)
-                                implicitWidth: kernelVerTxt.implicitWidth + 10
-                                implicitHeight: 16
-                                radius: 4
-                                color: Qt.rgba(0.52, 0.80, 0.92, 0.10)
-                                border.color: Qt.rgba(0.52, 0.80, 0.92, 0.28)
-                                border.width: 1
-                                Text {
-                                    id: kernelVerTxt
-                                    anchors.centerIn: parent
-                                    text: genDelegate.detailsCache[gen.number] ? genDelegate.detailsCache[gen.number].kernelVer : "—"
-                                    color: Qt.rgba(0.52, 0.80, 0.92, 0.95)
-                                    font.pixelSize: genDelegate.fpx(8)
-                                    font.bold: true
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                    elide: Text.ElideRight
-                                }
-                            }
-                        }
-
-                        // NixOS version badge
-                        RowLayout {
-                            spacing: 4
-                            visible: !!(genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].nixosVer)
-                            Text {
-                                text: i18n("nixos")
-                                color: genDelegate.textColor
-                                opacity: 0.28
-                                font.pixelSize: genDelegate.fpx(7)
-                                font.bold: true
-                                font.letterSpacing: 0.4
-                            }
-                            Rectangle {
-                                implicitWidth: metaVerTxt.implicitWidth + 10
-                                implicitHeight: 16
-                                radius: 4
-                                color: Qt.rgba(0.65, 0.90, 0.63, 0.10)
-                                border.color: Qt.rgba(0.65, 0.90, 0.63, 0.28)
-                                border.width: 1
-
-                                Text {
-                                    id: metaVerTxt
-                                    anchors.centerIn: parent
-                                    text: genDelegate.detailsCache[gen.number] ? genDelegate.detailsCache[gen.number].nixosVer : ""
-                                    color: Qt.rgba(0.65, 0.90, 0.63, 0.95)
-                                    font.pixelSize: genDelegate.fpx(7.5)
-                                    font.bold: true
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                    elide: Text.ElideRight
-                                    Layout.maximumWidth: 160
-                                    MouseArea {
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        ToolTip.text: parent.text
-                                        ToolTip.visible: containsMouse && parent.truncated
-                                        ToolTip.delay: 300
-                                    }
-                                }
-                            }
-                            Kirigami.Icon {
-                                source: genDelegate.svg("ic_copy")
-                                implicitWidth: 11
-                                implicitHeight: 11
-                                isMask: true
-                                color: genDelegate.textColor
-                                opacity: metaCopyMa.containsMouse ? 0.85 : 0.40
-                                Behavior on opacity {
-                                    NumberAnimation {
-                                        duration: 100
-                                    }
-                                }
-                                MouseArea {
-                                    id: metaCopyMa
-                                    anchors.fill: parent
-                                    anchors.margins: -3
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: genDelegate.copyToClipboard(metaVerTxt.text)
-                                    ToolTip.text: i18n("Copy NixOS version")
-                                    ToolTip.visible: containsMouse
-                                    ToolTip.delay: 400
-                                }
-                            }
-                        }
-
-                        // Commit date
-                        Text {
-                            visible: !!(genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].commitDate)
-                            text: genDelegate.detailsCache[gen.number] ? genDelegate.detailsCache[gen.number].commitDate : ""
-                            color: genDelegate.textColor
-                            opacity: 0.38
-                            font.pixelSize: genDelegate.fpx(7.5)
-                            font.family: Kirigami.Theme.fixedWidthFont.family
-                        }
-
-                        // Closure size — full /nix/store closure for this generation
-                        Rectangle {
-                            readonly property string sizeText: genDelegate.detailsCache[gen.number] ? genDelegate.formatBytes(genDelegate.detailsCache[gen.number].closureBytes || 0) : ""
-                            visible: sizeText !== ""
-                            Layout.preferredWidth: closureLbl.implicitWidth + 12
-                            Layout.preferredHeight: 16
-                            radius: 8
-                            color: Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.10)
-                            border.color: Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.30)
-                            border.width: 1
-                            Text {
-                                id: closureLbl
-                                anchors.centerIn: parent
-                                text: parent.sizeText
-                                color: genDelegate.accentColor
-                                opacity: 0.85
-                                font.pixelSize: genDelegate.fpx(7.5)
-                                font.family: Kirigami.Theme.fixedWidthFont.family
-                                font.bold: true
-                            }
-                            MouseArea {
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                ToolTip.text: i18n("Total closure size for this generation")
-                                ToolTip.visible: containsMouse
-                                ToolTip.delay: 400
-                            }
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-
-                        // Action label (only when relevant)
-                        Text {
-                            visible: gen.active && !gen.booted
-                            text: i18n("→ reboot to apply")
-                            color: genDelegate.statusColor
-                            opacity: 0.80
-                            font.pixelSize: genDelegate.fpx(7.5)
-                            font.italic: true
-                        }
-                        Text {
-                            visible: !gen.active && !gen.booted
-                            text: i18n("click  ▶  to activate")
-                            color: genDelegate.textColor
-                            opacity: 0.28
-                            font.pixelSize: genDelegate.fpx(7.5)
-                        }
-                    }
-                }
-
-                // Thin divider
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Qt.rgba(1, 1, 1, 0.06)
-                }
-
-                // ── Diff section header ───────────────────────────────────────
-                RowLayout {
-                    Layout.fillWidth: true
-                    height: 22
-                    spacing: 5
-
-                    Text {
-                        text: {
-                            if (gen.booted)
-                                return i18n("Changes vs. previous");
-                            if (genDelegate.diffMode === "booted" && genDelegate.bootedGenNum > 0)
-                                return i18n("vs. booted #%1").arg(genDelegate.bootedGenNum);
-                            return i18n("vs. previous");
-                        }
-                        color: genDelegate.textColor
-                        opacity: 0.42
-                        font.pixelSize: genDelegate.fpx(8)
-                        font.bold: true
-                    }
-
-                    // Count badge
-                    Rectangle {
-                        visible: !!(genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].diff.length > 0)
-                        height: 16
-                        width: cntLbl.implicitWidth + 10
-                        radius: 8
-                        color: Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.18)
-                        border.color: Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.50)
-                        border.width: 1
-                        Text {
-                            id: cntLbl
-                            anchors.centerIn: parent
-                            text: genDelegate.detailsCache[gen.number] ? genDelegate.detailsCache[gen.number].diff.length : "0"
-                            color: genDelegate.accentColor
-                            font.pixelSize: genDelegate.fpx(7.5)
-                            font.bold: true
-                        }
-                    }
-
-                    // Diff mode toggle
-                    Rectangle {
-                        visible: !gen.booted && genDelegate.bootedGenNum > 0
-                        width: 20
-                        height: 17
-                        radius: 4
-                        color: dmmMa.containsMouse ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.04)
-                        border.color: Qt.rgba(1, 1, 1, 0.10)
-                        border.width: 1
-                        Behavior on color {
-                            ColorAnimation {
-                                duration: 100
-                            }
-                        }
-                        Kirigami.Icon {
-                            anchors.centerIn: parent
-                            source: genDelegate.svg("ic_diff")
-                            implicitWidth: 11
-                            implicitHeight: 11
-                            isMask: true
-                            color: genDelegate.textColor
-                            opacity: 0.50
-                        }
-                        MouseArea {
-                            id: dmmMa
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: genDelegate.diffModeToggle(gen.number)
-                            ToolTip.text: genDelegate.diffMode === "booted" ? i18n("Compare vs. previous") : i18n("Compare vs. booted")
-                            ToolTip.visible: containsMouse
-                            ToolTip.delay: 400
-                        }
-                    }
-
-                    Item {
-                        Layout.fillWidth: true
-                    }
-
-                    // Filter input
-                    Rectangle {
-                        visible: !!(genDelegate.diffFilterEnabled && genDelegate.detailsCache[gen.number] && genDelegate.detailsCache[gen.number].diff.length > 0)
-                        height: 18
-                        width: 110
-                        radius: 4
-                        color: Qt.rgba(1, 1, 1, 0.05)
-                        border.color: ff.activeFocus ? Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.55) : Qt.rgba(1, 1, 1, 0.10)
-                        border.width: 1
-                        Behavior on border.color {
-                            ColorAnimation {
-                                duration: 110
-                            }
-                        }
-                        TextInput {
-                            id: ff
-                            anchors {
-                                fill: parent
-                                leftMargin: 7
-                                rightMargin: 7
-                            }
-                            font.pixelSize: genDelegate.fpx(7.5)
-                            color: genDelegate.textColor
-                            clip: true
-                            onTextChanged: genDelegate.filterChanged(text)
-                            Text {
-                                anchors.fill: parent
-                                text: i18n("Filter…")
-                                color: genDelegate.textColor
-                                opacity: 0.25
-                                font.pixelSize: genDelegate.fpx(7.5)
-                                visible: ff.text === ""
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                        }
-                    }
-                }
-
-                // ── Package list ─────────────────────────────────────────────
-                Rectangle {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: 5
-                    color: Qt.rgba(0, 0, 0, 0.35)
-                    border.width: 0
-                    clip: true
-
-                    ListView {
-                        id: diffView
-                        anchors.fill: parent
-                        anchors.margins: 3
-                        clip: true
-                        spacing: 1
-                        ScrollBar.vertical: ScrollBar {
-                            policy: ScrollBar.AsNeeded
-                        }
-                        onContentHeightChanged: genDelegate.diffContentH = contentHeight
-
-                        model: {
-                            if (!genDelegate.detailsCache[gen.number])
-                                return [];
-                            const all = genDelegate.detailsCache[gen.number].diff;
-                            const f = genDelegate.diffFilter.toLowerCase();
-                            return f ? all.filter(d => d.name.toLowerCase().indexOf(f) !== -1) : all;
-                        }
-
-                        Text {
-                            anchors.centerIn: parent
-                            visible: diffView.count === 0
-                            text: genDelegate.isLoadingDetails && !genDelegate.detailsCache[gen.number] ? i18n("Loading…") : (genDelegate.diffFilter ? i18n("No matches") : i18n("No package changes"))
-                            color: genDelegate.textColor
-                            opacity: 0.32
-                            font.pixelSize: genDelegate.fpx(9)
-                        }
-
-                        delegate: PackageRow {
-                            width: diffView.width
-                            pkg: modelData
-                            accentColor: genDelegate.accentColor
-                            textColor: genDelegate.textColor
-                            fs: genDelegate.fs
-                            forceExpanded: false
-                            iconCache: genDelegate.iconCache
-                            metaCache: genDelegate.metaCache
-                            showPackageIcons: genDelegate.showPackageIcons
-                            onCopyRequested: t => genDelegate.copyToClipboard(t)
-                        }
-                    }
-                }
-
-                // ── Config diff section ──────────────────────────────────────
-                ColumnLayout {
-                    visible: genDelegate.showConfigDiff
-                    Layout.fillWidth: true
-                    spacing: 2
-
-                    // Section header
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 4
-
-                        Text {
-                            text: i18n("Config changes")
-                            color: genDelegate.textColor
-                            opacity: 0.45
-                            font.pixelSize: genDelegate.fpx(7.5)
-                            font.bold: true
-                            font.letterSpacing: 0.4
-                        }
-
-                        Text {
-                            visible: genDelegate.configDiffData && genDelegate.configDiffData.commitB
-                            text: genDelegate.configDiffData ? genDelegate.configDiffData.commitB.slice(0, 7) : ""
-                            color: genDelegate.accentColor
-                            opacity: 0.6
-                            font.pixelSize: genDelegate.fpx(7)
-                            font.family: Kirigami.Theme.fixedWidthFont.family
-                        }
-
-                        Item {
-                            Layout.fillWidth: true
-                        }
-                    }
-
-                    // "ok" with diff lines → scrollable list
-                    Rectangle {
-                        visible: genDelegate.configDiffData && genDelegate.configDiffData.status === "ok" && genDelegate.configDiffData.diff.length > 0
-                        Layout.fillWidth: true
-                        height: 110
-                        radius: 5
-                        color: Qt.rgba(0, 0, 0, 0.28)
-                        clip: true
-
-                        ListView {
-                            id: configDiffView
-                            anchors.fill: parent
-                            anchors.margins: 3
-                            clip: true
-                            spacing: 0
-                            ScrollBar.vertical: ScrollBar {
-                                policy: ScrollBar.AsNeeded
-                            }
-
-                            model: {
-                                if (!genDelegate.configDiffData || genDelegate.configDiffData.status !== "ok")
-                                    return [];
-                                return genDelegate.configDiffData.diff.split("\n").filter(l => l.length > 0);
-                            }
-
-                            delegate: Text {
-                                required property string modelData
-                                width: configDiffView.width - 6
-                                leftPadding: 3
-                                text: modelData
-                                font.pixelSize: genDelegate.fpx(7.5)
-                                font.family: Kirigami.Theme.fixedWidthFont.family
-                                wrapMode: Text.NoWrap
-                                elide: Text.ElideRight
-                                color: {
-                                    if (modelData.startsWith("+++") || modelData.startsWith("---"))
-                                        return Qt.rgba(genDelegate.textColor.r, genDelegate.textColor.g, genDelegate.textColor.b, 0.45);
-                                    if (modelData.startsWith("+"))
-                                        return "#6db96d";
-                                    if (modelData.startsWith("-"))
-                                        return "#d46b6b";
-                                    if (modelData.startsWith("@@"))
-                                        return Qt.rgba(genDelegate.accentColor.r, genDelegate.accentColor.g, genDelegate.accentColor.b, 0.8);
-                                    return Qt.rgba(genDelegate.textColor.r, genDelegate.textColor.g, genDelegate.textColor.b, 0.55);
-                                }
-                            }
-                        }
-                    }
-
-                    // Non-diff statuses (same-commit, error, no-repo, ok with empty diff)
-                    Text {
-                        visible: !genDelegate.configDiffData || genDelegate.configDiffData.status !== "ok" || genDelegate.configDiffData.diff.length === 0
-                        Layout.fillWidth: true
-                        text: {
-                            if (!genDelegate.configDiffData)
-                                return "";
-                            const cd = genDelegate.configDiffData;
-                            if (cd.status === "ok")
-                                return i18n("No .nix file changes");
-                            if (cd.status === "same-commit")
-                                return i18n("No config changes (same commit)");
-                            return cd.message || cd.status;
-                        }
-                        color: genDelegate.textColor
-                        opacity: 0.35
-                        font.pixelSize: genDelegate.fpx(8)
-                        wrapMode: Text.WordWrap
-                    }
-                }
+        }
+        PackageList {
+            storePathCache: genDelegate.storePathCache
+            onStorePathRequested: pkg => genDelegate.storePathRequested(pkg)
+            Layout.fillWidth: true
+            packages: genDelegate.details.diff || []
+            iconCache: genDelegate.iconCache
+            metaCache: genDelegate.metaCache
+            showPackageIcons: genDelegate.showPackageIcons
+            enableGlow: genDelegate.enableGlow
+            filterEnabled: genDelegate.diffFilterEnabled
+            textColor: genDelegate.textColor
+            accentColor: genDelegate.accentColor
+            fs: genDelegate.fs
+            viewMode: genDelegate.diffViewMode
+            onCopyToClipboard: text => genDelegate.copyToClipboard(text)
+        }
+        Disclosure {
+            Layout.fillWidth: true
+            visible: !!genDelegate.configDiff.status && genDelegate.configDiff.status !== "missing"
+            title: qsTr("Configuration changes")
+            TextArea {
+                width: parent.width
+                readOnly: true
+                selectByMouse: true
+                wrapMode: TextEdit.NoWrap
+                text: genDelegate.configDiff.diff || genDelegate.configDiff.message || qsTr("No configuration changes")
+                color: genDelegate.textColor
+                font.family: UI.Theme.fixedWidthFont.family
+                font.pixelSize: genDelegate.fpx(8)
             }
+        }
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            UI.ActionButton {
+                text: qsTr("Compare with…")
+                glyph: genDelegate.svg("ic_diff")
+                primary: true
+                onClicked: compareMenu.popup()
+            }
+        }
+    }
+    Menu {
+        id: generationMenu
+        MenuItem {
+            text: qsTr("Activate now")
+            visible: genDelegate.enableLiveSwitch
+            height: visible ? implicitHeight : 0
+            enabled: !genDelegate.isBusy
+            onTriggered: genDelegate.requestAction(genDelegate.gen.number, "switch")
+        }
+        MenuItem {
+            text: qsTr("Use on next boot")
+            enabled: !genDelegate.isBusy
+            onTriggered: genDelegate.requestAction(genDelegate.gen.number, "rollback")
+        }
+        MenuItem {
+            text: qsTr("Delete generation")
+            visible: genDelegate.showDeleteButton
+            height: visible ? implicitHeight : 0
+            enabled: !genDelegate.isBusy && !genDelegate.gen.active && !genDelegate.gen.booted
+            onTriggered: genDelegate.requestAction(genDelegate.gen.number, "delete")
+        }
+        MenuItem {
+            text: qsTr("Compare with…")
+            onTriggered: compareMenu.popup()
+        }
+    }
+    Menu {
+        id: compareMenu
+        Instantiator {
+            model: genDelegate.allGenerations
+            delegate: MenuItem {
+                required property var modelData
+                text: "#" + modelData.number
+                enabled: modelData.number !== genDelegate.gen.number
+                onTriggered: genDelegate.compareWithRequested(genDelegate.gen.number, modelData.number)
+            }
+            onObjectAdded: (index, object) => compareMenu.insertItem(index, object)
+            onObjectRemoved: (index, object) => compareMenu.removeItem(object)
         }
     }
 }

@@ -1,13 +1,19 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "../shared" as UI
 
 // Single expandable package diff row.
 // Used in both GenerationDelegate (timeline) and the Diff tab.
 Item {
     id: root
 
+    property var storePathCache: ({})
+    signal storePathRequested(var pkg)
+    readonly property string pathKey: (pkg.storeProfile || "") + "|" + pkgName + "|" + (pkgType === "removed" ? pkgOldVersion : pkgNewVersion)
+    readonly property var pathResult: storePathCache[pathKey]
+    onIsOpenChanged: if (isOpen && pkg.storeProfile && !pathResult)
+        storePathRequested(pkg)
     property var pkg: ({})     // { name, type, oldVersion, newVersion, size }
     property color accentColor: "transparent"
     property color textColor: "white"
@@ -19,14 +25,15 @@ Item {
     property var iconCache: ({})
     property var metaCache: ({})
     property bool showPackageIcons: true
+    property bool enableGlow: true
 
     signal copyRequested(string text)
 
-    // Theme-aware font sizing. Legacy hardcoded sizes were tuned against a 9px base.
-    readonly property int baseFontPx: Kirigami.Theme.smallFont.pixelSize
     function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * baseFontPx * fs));
+        return UI.Theme.fontPx(n, fs);
     }
+    property bool alternate: false
+    readonly property real rowHeight: 32 * fs
 
     readonly property string resolvedIcon: {
         if (!showPackageIcons || !pkgName)
@@ -50,13 +57,34 @@ Item {
         return Qt.resolvedUrl("../assets/" + name + ".svg");
     }
 
-    property color sigil: pkg && pkg.type === "added" ? "#3ddc84" : pkg && pkg.type === "removed" ? "#ff6b6b" : "#ffb74d"
+    property color sigil: pkg && pkg.type === "added" ? UI.Theme.positive : pkg && pkg.type === "removed" ? UI.Theme.negative : UI.Theme.changed
 
-    height: isOpen ? 22 + detailPanel.implicitHeight + 6 : 22
+    height: isOpen ? rowHeight + detailPanel.implicitHeight + 8 : rowHeight
     Behavior on height {
         NumberAnimation {
             duration: 170
             easing.type: Easing.InOutQuad
+        }
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        radius: 4
+        color: root.isOpen ? UI.Theme.wash(root.sigil, .045) : root.alternate ? "#03ffffff" : "transparent"
+        Rectangle {
+            width: 2
+            height: parent.height
+            color: root.sigil
+            visible: root.isOpen
+            opacity: .95
+            Rectangle {
+                anchors.centerIn: parent
+                width: 6
+                height: parent.height
+                color: root.sigil
+                opacity: .08
+                visible: root.enableGlow
+            }
         }
     }
 
@@ -68,7 +96,7 @@ Item {
             right: parent.right
             top: parent.top
         }
-        height: 22
+        height: root.rowHeight
         radius: 3
         color: rowMa.containsMouse ? Qt.rgba(1, 1, 1, 0.06) : "transparent"
         Behavior on color {
@@ -92,17 +120,25 @@ Item {
                 font.pixelSize: root.fpx(11)
                 font.bold: true
                 Layout.minimumWidth: 12
+                Rectangle {
+                    anchors.centerIn: parent
+                    width: 18
+                    height: 18
+                    radius: 9
+                    color: UI.Theme.wash(root.sigil, .07)
+                    visible: root.enableGlow
+                }
             }
 
             // Package icon — system app icon when available, generic fallback
-            Kirigami.Icon {
+            UI.Icon {
                 readonly property bool hasAppIcon: root.showPackageIcons && root.resolvedIcon !== ""
                 source: hasAppIcon ? root.resolvedIcon : root.svg("ic_package_added")
                 implicitWidth: hasAppIcon ? 16 : 12
                 implicitHeight: hasAppIcon ? 16 : 12
                 isMask: !hasAppIcon
                 color: hasAppIcon ? "transparent" : root.sigil
-                opacity: hasAppIcon ? 1.0 : 0.65
+                opacity: hasAppIcon ? 1.0 : 0.9
                 smooth: true
             }
 
@@ -110,8 +146,8 @@ Item {
             Text {
                 text: root.pkgName
                 color: root.textColor
-                font.pixelSize: root.fpx(9)
-                font.bold: true
+                font.pixelSize: 10 * root.fs
+                font.weight: Font.Medium
                 elide: Text.ElideRight
                 Layout.fillWidth: true
             }
@@ -122,9 +158,9 @@ Item {
                 color: root.textColor
                 opacity: 0.55
                 font.pixelSize: root.fpx(8)
-                font.family: Kirigami.Theme.fixedWidthFont.family
+                font.family: UI.Theme.fixedWidthFont.family
                 elide: Text.ElideRight
-                Layout.preferredWidth: 155
+                Layout.preferredWidth: Math.min(155, root.width * .3)
                 Layout.maximumWidth: 175
                 horizontalAlignment: Text.AlignRight
             }
@@ -134,9 +170,9 @@ Item {
                 visible: root.pkgSize !== ""
                 text: root.pkgSize
                 color: root.sigil
-                opacity: 0.80
-                font.pixelSize: root.fpx(7.5)
-                font.family: Kirigami.Theme.fixedWidthFont.family
+                opacity: 1
+                font.pixelSize: 9 * root.fs
+                font.family: UI.Theme.fixedWidthFont.family
                 Layout.preferredWidth: 62
                 Layout.maximumWidth: 72
                 horizontalAlignment: Text.AlignRight
@@ -144,7 +180,7 @@ Item {
             }
 
             // Chevron (only in compact mode)
-            Kirigami.Icon {
+            UI.Icon {
                 visible: !root.forceExpanded
                 source: root.isOpen ? root.svg("ic_chevron_up") : root.svg("ic_chevron_down")
                 implicitWidth: 11
@@ -183,7 +219,7 @@ Item {
         visible: root.isOpen
         implicitHeight: detailCol.implicitHeight + 12
         radius: 5
-        color: Qt.rgba(root.sigil.r, root.sigil.g, root.sigil.b, 0.06)
+        color: "transparent"
         border.width: 0
 
         ColumnLayout {
@@ -196,15 +232,24 @@ Item {
             }
             spacing: 5
 
+            Text {
+                Layout.fillWidth: true
+                text: root.pkgName
+                color: root.textColor
+                wrapMode: Text.WrapAnywhere
+                font.pixelSize: 10 * root.fs
+                font.weight: Font.Medium
+            }
+
             // Version row — upgrade
             RowLayout {
                 Layout.fillWidth: true
                 spacing: 8
                 visible: root.pkgType !== "added" && root.pkgType !== "removed" && root.pkgOldVersion !== "" && root.pkgNewVersion !== ""
                 Text {
-                    text: i18n("Version")
+                    text: qsTr("Version")
                     color: root.textColor
-                    opacity: 0.38
+                    opacity: 0.65
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
@@ -213,7 +258,7 @@ Item {
                     color: root.textColor
                     opacity: 0.92
                     font.pixelSize: root.fpx(8.5)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: UI.Theme.fixedWidthFont.family
                     font.bold: true
                     Layout.fillWidth: true
                     elide: Text.ElideRight
@@ -226,9 +271,9 @@ Item {
                 spacing: 8
                 visible: root.pkgType === "added" && root.pkgNewVersion !== ""
                 Text {
-                    text: i18n("Version")
+                    text: qsTr("Version")
                     color: root.textColor
-                    opacity: 0.38
+                    opacity: 0.65
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
@@ -237,7 +282,7 @@ Item {
                     color: root.sigil
                     opacity: 0.92
                     font.pixelSize: root.fpx(8.5)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: UI.Theme.fixedWidthFont.family
                     font.bold: true
                 }
             }
@@ -248,9 +293,9 @@ Item {
                 spacing: 8
                 visible: root.pkgType === "removed" && root.pkgOldVersion !== ""
                 Text {
-                    text: i18n("Version")
+                    text: qsTr("Version")
                     color: root.textColor
-                    opacity: 0.38
+                    opacity: 0.65
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
@@ -259,7 +304,7 @@ Item {
                     color: root.sigil
                     opacity: 0.92
                     font.pixelSize: root.fpx(8.5)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: UI.Theme.fixedWidthFont.family
                     font.bold: true
                 }
             }
@@ -270,9 +315,9 @@ Item {
                 spacing: 8
                 visible: root.pkgSize !== ""
                 Text {
-                    text: i18n("Size delta")
+                    text: qsTr("Size delta")
                     color: root.textColor
-                    opacity: 0.38
+                    opacity: 0.65
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
@@ -281,7 +326,7 @@ Item {
                     color: root.sigil
                     opacity: 0.92
                     font.pixelSize: root.fpx(8.5)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    font.family: UI.Theme.fixedWidthFont.family
                     font.bold: true
                 }
             }
@@ -291,26 +336,25 @@ Item {
                 Layout.fillWidth: true
                 spacing: 8
                 Text {
-                    text: i18n("Store path")
+                    text: qsTr("Store path")
                     color: root.textColor
-                    opacity: 0.38
+                    opacity: 0.65
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
                 Text {
                     id: storePath
-                    readonly property string ver: root.pkgType === "removed" ? root.pkgOldVersion : root.pkgNewVersion
-                    text: "/nix/store/…-" + root.pkgName + "-" + ver
+                    text: root.pathResult ? root.pathResult.path || root.pathResult.message : root.pkg.storeProfile ? qsTr("Resolving store path…") : qsTr("Not built yet")
                     color: root.textColor
-                    opacity: 0.60
-                    font.pixelSize: root.fpx(7.5)
-                    font.family: Kirigami.Theme.fixedWidthFont.family
+                    opacity: 0.8
+                    font.pixelSize: 9 * root.fs
+                    font.family: UI.Theme.fixedWidthFont.family
                     elide: Text.ElideMiddle
                     Layout.fillWidth: true
                 }
                 Rectangle {
-                    width: 20
-                    height: 17
+                    implicitWidth: 20
+                    implicitHeight: 17
                     radius: 4
                     color: copyMa.containsMouse ? Qt.rgba(1, 1, 1, 0.10) : Qt.rgba(1, 1, 1, 0.04)
                     border.color: Qt.rgba(1, 1, 1, 0.14)
@@ -320,22 +364,23 @@ Item {
                             duration: 100
                         }
                     }
-                    Kirigami.Icon {
+                    UI.Icon {
                         anchors.centerIn: parent
                         source: root.svg("ic_copy")
                         implicitWidth: 10
                         implicitHeight: 10
                         isMask: true
                         color: root.textColor
-                        opacity: 0.60
+                        opacity: 0.8
                     }
                     MouseArea {
                         id: copyMa
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: root.copyRequested(storePath.text)
-                        ToolTip.text: i18n("Copy store path")
+                        enabled: !!root.pathResult && !!root.pathResult.path
+                        onClicked: root.copyRequested(root.pathResult.path)
+                        ToolTip.text: qsTr("Copy store path")
                         ToolTip.visible: containsMouse
                         ToolTip.delay: 400
                     }
@@ -348,9 +393,9 @@ Item {
             //   2) Website from a plasmoid metadata.json → user-built widget repo
             //   3) nixpkgs search fallback     → at least lets the user find the derivation
             RowLayout {
+                id: sourceRow
                 Layout.fillWidth: true
                 spacing: 8
-
                 readonly property var metaEntry: root.metaCache && root.pkgName ? root.metaCache[root.pkgName] : undefined
                 // The URL ultimately comes from either nixpkgs meta.homepage or a
                 // plasmoid metadata.json's Website field — both are upstream-controlled
@@ -365,9 +410,9 @@ Item {
                 // Short label that hints at the link's origin
                 readonly property string label: {
                     if (metaSource === "plasmoid")
-                        return i18n("upstream");
+                        return qsTr("upstream");
                     if (metaSource === "nixpkgs")
-                        return i18n("homepage");
+                        return qsTr("homepage");
                     return "nixpkgs";
                 }
 
@@ -381,7 +426,7 @@ Item {
                 Text {
                     text: parent.label
                     color: root.textColor
-                    opacity: 0.38
+                    opacity: 0.65
                     font.pixelSize: root.fpx(8)
                     Layout.minimumWidth: 65
                 }
@@ -402,8 +447,8 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: Qt.openUrlExternally(parent.parent.activeUrl)
-                        ToolTip.text: parent.parent.activeUrl
+                        onClicked: Qt.openUrlExternally(sourceRow.activeUrl)
+                        ToolTip.text: sourceRow.activeUrl
                         ToolTip.visible: containsMouse
                         ToolTip.delay: 400
                     }

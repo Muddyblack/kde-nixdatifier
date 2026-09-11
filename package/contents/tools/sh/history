@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Usage:
+#   history record <action> <label> <genNum> <exitCode> <output>
+#   history list
+#   history clear
+# Persists a JSON file per run under $hist_dir so past rebuild/GC/update output
+# survives after the toast that reported it is dismissed. Retains only the 50
+# most recent entries (trimmed on every record).
+set -u
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+command -v jq >/dev/null 2>&1 || { echo "ERROR: jq not on PATH" >&2; exit 1; }
+
+hist_dir="${XDG_CACHE_HOME:-$HOME/.cache}/nixdatifier/history"
+mkdir -p "$hist_dir"
+
+mode="${1:?missing mode}"; shift
+
+case "$mode" in
+    record)
+        action="${1:?}" label="${2:-}" genNum="${3:--1}" exitCode="${4:-1}" output="${5:-}"
+        [[ "$genNum" =~ ^-?[0-9]+$ ]] || genNum=-1
+        [[ "$exitCode" =~ ^[0-9]+$ ]] || exitCode=1
+        ts_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        ts_ms=$(($(date +%s%N) / 1000000))
+        success="false"
+        [ "$exitCode" = "0" ] && success="true"
+        file="$hist_dir/$ts_ms-$action.json"
+        tmp=$(mktemp "$hist_dir/.tmp.XXXXXXXX") || exit 1
+        jq -n \
+            --arg ts "$ts_iso" \
+            --arg action "$action" \
+            --arg label "$label" \
+            --argjson genNum "$genNum" \
+            --argjson exitCode "$exitCode" \
+            --argjson success "$success" \
+            --arg output "$output" \
+            '{timestamp:$ts, action:$action, label:$label, genNum:$genNum, exitCode:$exitCode, success:$success, output:$output}' \
+            > "$tmp" && mv "$tmp" "$file" || rm -f "$tmp"
+        # Retain only the 50 most recent entries.
+        ls -1t "$hist_dir"/*.json 2>/dev/null | tail -n +51 | xargs -r rm --
+        ;;
+    list)
+        jq -s 'sort_by(.timestamp) | reverse' "$hist_dir"/*.json 2>/dev/null || echo '[]'
+        ;;
+    clear)
+        rm -f "$hist_dir"/*.json
+        ;;
+    *)
+        echo "Unknown mode: $mode" >&2
+        exit 2
+        ;;
+esac

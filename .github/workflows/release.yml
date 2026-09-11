@@ -51,6 +51,6 @@ jobs:
             ---
             Install by downloading the `.plasmoid` file and running:
             ```
-            plasmapkg2 -i ${{ steps.info.outputs.artifact }}
+            kpackagetool6 -t Plasma/Applet -i ${{ steps.info.outputs.artifact }}
             ```
           files: ${{ steps.info.outputs.artifact }}

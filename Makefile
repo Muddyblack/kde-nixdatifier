@@ -1,4 +1,4 @@
-.PHONY: help view view-h install pack tag
+.PHONY: help view view-h hyprland test install pack tag
 .DEFAULT_GOAL := help
 
 help: ## list targets
@@ -29,9 +29,15 @@ pack: ## build .plasmoid archive
 	  name=$$(basename "$$PWD"); \
 	  out="$$PWD/$$name-$$ver.plasmoid"; \
 	  rm -f "$$out"; \
-	  (cd package && zip -r "$$out" . -x '*.swp' '*~'); \
+	  (cd package && zip -r "$$out" . -x '*.swp' '*~' 'icon-emblem.png'); \
 	  echo "wrote $$out"; \
 	fi
 
 tag: ## bump version, commit, tag, push
 	@./tag.sh
+
+hyprland: ## run the Quickshell popup, pill and tray
+	nix run path:.#hyprland
+
+test: ## isolated QML interactions and shell-helper checks
+	./tests/run.sh

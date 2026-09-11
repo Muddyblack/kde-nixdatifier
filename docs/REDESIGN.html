@@ -1,0 +1,608 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Nixdatifier — KDE & Hyprland design preview</title>
+<style>
+  :root{color-scheme:dark;--page:#0d1015;--ink:#ecf0f5;--muted:#939ba9;--line:#ffffff12;--blue:#91bcff;--green:#85d6b4;--amber:#edcc8a;--red:#ed9d9d;font-family:Inter,"Segoe UI",Arial,sans-serif;font-size:14px}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--page);color:var(--ink)}
+  button,input,select{font:inherit}
+  button{cursor:pointer;color:inherit}
+  button:disabled{cursor:wait;opacity:.6}
+  button,input,select{outline-offset:4px}
+  :focus-visible{outline:2px solid var(--blue)}
+  button{border:0}
+  button svg{pointer-events:none}
+  .icon{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+  .mark{width:29px;height:29px;color:var(--accent,var(--blue));flex-shrink:0}
+  .mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:.92em;letter-spacing:-.3px}
+  .eyebrow{font-size:10px;letter-spacing:1.7px;text-transform:uppercase;font-weight:600;color:var(--muted)}
+  .topline{height:68px;padding:0 4%;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line)}
+  .brand{display:flex;gap:11px;align-items:center;font-weight:600;letter-spacing:-.3px}
+  .brand .mark{width:23px;height:23px}
+  .brand span{color:#737c8b;font-size:12px;font-weight:400;letter-spacing:0;margin-left:7px;padding-left:17px;border-left:1px solid #ffffff20}
+  .preview-badge{display:flex;align-items:center;gap:8px;color:#a6afbd;font-size:11px}
+  .dot{display:inline-block;width:6px;height:6px;background:var(--green);border-radius:50%;flex-shrink:0}
+  main{max-width:1640px;margin:auto;padding:39px 4% 0}
+  .intro{display:flex;align-items:flex-end;justify-content:space-between;gap:25px;margin-bottom:31px}
+  h1{font-size:clamp(25px,2.6vw,38px);font-weight:500;letter-spacing:-1.4px;margin:0 0 12px}
+  .intro p{color:var(--muted);margin:0;font-size:13px;line-height:1.6}
+  .switcher{display:flex;background:#171c24;padding:4px;border:1px solid var(--line);border-radius:10px;flex-shrink:0}
+  .switcher button{font-size:11px;padding:9px 15px;color:#929cac;background:transparent;border-radius:7px}
+  .switcher button[aria-pressed="true"]{background:#303845;color:#fff;box-shadow:0 1px 4px #0004}
+  .desktops{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+  .desktops.single{grid-template-columns:minmax(0,900px);justify-content:center}
+  .platform[hidden]{display:none}
+  .platform-label{display:flex;align-items:center;justify-content:space-between;margin-bottom:13px}
+  .platform-label h2{font-size:14px;font-weight:500;letter-spacing:-.2px;margin:0}
+  .platform-label .index{color:#5d6778;font-size:11px;margin-right:12px;font-family:monospace}
+  .platform-label .kind{font-size:10px;color:#8e98a9;display:flex;align-items:center;gap:6px}
+  .platform-label .icon{width:13px;height:13px}
+  .desktop{height:742px;position:relative;overflow:hidden;border:1px solid #ffffff16;border-radius:15px;isolation:isolate;background:#111b30}
+  .desktop.kde{background:radial-gradient(ellipse at 20% 15%,#41798a55,transparent 50%),linear-gradient(140deg,#182b3d 0%,#142331 35%,#20253b 65%,#32434d)}
+  .desktop.hyprland{background:radial-gradient(ellipse at 85% 20%,#67869544,transparent 55%),radial-gradient(ellipse at 0% 90%,#64607844,transparent 60%),#172129}
+  .mountain{position:absolute;inset:0;z-index:-1;overflow:hidden}
+  .mountain:before{content:"";position:absolute;inset:0;background:linear-gradient(140deg,#72949b30,#3b607033);clip-path:polygon(0 57%,40% 21%,69% 69%,100% 34%,100% 100%,0 100%)}
+  .mountain:after{content:"";position:absolute;inset:0;background:linear-gradient(130deg,#101b2b,#2b4057aa);clip-path:polygon(0 96%,43% 42%,100% 86%,100% 100%,0 100%)}
+  .hyprland .mountain:before{background:linear-gradient(110deg,#79909730,transparent);clip-path:polygon(0 13%,100% 59%,100% 62%,0 29%)}
+  .hyprland .mountain:after{background:linear-gradient(120deg,#8aa1a922,transparent);clip-path:polygon(0 21%,100% 67%,100% 85%,0 24%)}
+  .wallpaper-caption{position:absolute;left:28px;top:28px;color:#ffffff66;font-size:11px;letter-spacing:2px;line-height:1.7}
+  .wallpaper-caption strong{display:block;color:#ffffffa0;font-size:23px;font-weight:300;letter-spacing:-.5px}
+  .desktop-bar{position:absolute;display:flex;align-items:center;gap:13px;background:#141b24e8;backdrop-filter:blur(20px);border:1px solid #ffffff15;color:#bec7d3;font-size:10px;z-index:2}
+  .kde .desktop-bar{bottom:10px;left:10px;right:10px;height:46px;padding:0 12px;border-radius:10px}
+  .hyprland .desktop-bar{top:10px;left:10px;right:10px;height:35px;padding:0 12px;border-radius:9px}
+  .desktop-bar .mark{width:21px;height:21px}
+  .desktop-bar .icon{width:15px;height:15px}
+  .bar-app{height:30px;width:30px;display:grid;place-items:center;border-radius:6px}
+  .bar-app.blue{color:#8dbfff;background:#91bcff12}
+  .bar-spacer{flex:1}
+  .bar-separator{height:18px;width:1px;background:#ffffff15}
+  .tray-toggle{background:#91bcff1a;border:1px solid #91bcff3a;color:#a7ccff;border-radius:7px;display:flex;align-items:center;gap:7px;padding:5px 7px}
+  .tray-toggle .mark{width:17px;height:17px}
+  .workspaces{display:flex;gap:12px;font-size:9px;font-family:monospace;color:#7b8797}
+  .workspaces b{color:#d1e2f3}
+  .clock{font-variant-numeric:tabular-nums;text-align:center;line-height:1.3}
+  .clock small{color:#8693a5;font-size:8px}
+  .panel-pill{position:absolute;right:23px;top:57px;display:flex;align-items:center;gap:8px;font-size:10px;background:#17202df0;border:1px solid #91bcff40;padding:8px 11px;border-radius:20px;color:#e4edf8;z-index:2;box-shadow:0 4px 15px #0002}
+  .panel-pill .mark{width:16px;height:16px}
+  .panel-pill .count{border-left:1px solid #ffffff20;padding-left:8px;color:var(--blue)}
+  .widget{--accent:#91bcff;--accent-rgb:145,188,255;--surface:#171d27;position:absolute;left:22px;right:22px;bottom:70px;background:rgba(19,25,35,.96);backdrop-filter:blur(34px);border:1px solid #a3b9de2c;border-radius:16px;box-shadow:0 22px 60px #03081260,0 2px 6px #0003;overflow:hidden;color:#e6ecf5;transition:opacity .16s,transform .16s}
+  .hyprland .widget{top:99px;bottom:auto}
+  .widget.closed{opacity:0;transform:translateY(8px);pointer-events:none;visibility:hidden}
+  .widget.opaque{background:#131923;backdrop-filter:none}
+  .widget-header{padding:20px 21px 0}
+  .title-row{display:flex;align-items:center;gap:10px}
+  .title-group{flex:1;min-width:0}
+  .title-group h3{margin:0;font-size:16px;font-weight:600;letter-spacing:-.4px}
+  .title-group p{font-size:10px;color:#929daf;margin:5px 0 0}
+  .title-row>.mark{width:31px;height:31px;margin-right:1px}
+  .icon-button{display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;width:29px;height:29px;border-radius:7px;background:transparent;color:#929fb2}
+  .icon-button:hover,.icon-button.active{color:var(--accent);background:rgba(var(--accent-rgb),.1)}
+  .icon-button .icon{width:16px;height:16px}
+  .status-card{display:flex;align-items:center;gap:10px;background:linear-gradient(110deg,rgba(var(--accent-rgb),.075),#ffffff02);border:1px solid rgba(var(--accent-rgb),.12);border-radius:10px;padding:12px;margin-top:18px}
+  .status-symbol{width:31px;height:31px;display:grid;place-items:center;background:#85d6b412;border-radius:9px;color:var(--green)}
+  .status-copy{flex:1;font-size:12px;line-height:1.4}
+  .status-copy small{display:block;font-size:10px;color:#919eaf;margin-top:2px}
+  .status-copy b{font-weight:500}
+  .text-link{display:flex;align-items:center;gap:5px;font-size:10px;white-space:nowrap;color:var(--accent);background:transparent;padding:6px 0 6px 6px}
+  .text-link .icon{width:13px;height:13px}
+  .tabs{display:flex;gap:18px;margin-top:14px;border-bottom:1px solid #ffffff0d;padding:0 1px}
+  .tab{position:relative;display:flex;align-items:center;justify-content:center;gap:6px;background:transparent;color:#96a2b4;font-size:11px;padding:12px 0 13px;white-space:nowrap}
+  .tab .icon{width:14px;height:14px}
+  .tab[aria-selected="true"]{color:var(--accent)}
+  .tab[aria-selected="true"]:after{content:"";position:absolute;bottom:-1px;left:0;right:0;height:2px;background:var(--accent);border-radius:3px}
+  .tab .badge{font-size:9px;padding:1px 5px;background:rgba(var(--accent-rgb),.12);color:var(--accent);border-radius:4px}
+  .view{height:353px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#3d485a transparent;padding:17px 21px 16px}
+  .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:15px}
+  .search{display:flex;align-items:center;gap:8px;flex:1;min-width:0;background:#ffffff04;border:1px solid #ffffff0e;border-radius:7px;padding:8px 10px;color:#77869c}
+  .search .icon{width:14px;height:14px}
+  .search input{min-width:0;width:100%;color:#dae4f0;border:0;background:transparent;font-size:10px;outline:none}
+  .search:focus-within{border-color:var(--accent)}
+  input::placeholder{color:#8290a5}
+  .key{font-size:9px;color:#647188;border:1px solid #ffffff15;padding:0 4px;border-radius:3px}
+  .subheading{font-size:9px;font-weight:500;letter-spacing:1px;color:#8491a4;text-transform:uppercase;display:flex;align-items:center;justify-content:space-between;margin-bottom:9px}
+  .subheading span:last-child{letter-spacing:0;text-transform:none;font-size:10px;color:#7f8ba0}
+  .generation{position:relative;border:1px solid transparent;border-radius:9px;margin-bottom:5px}
+  .generation.selected{border-color:rgba(var(--accent-rgb),.2);background:rgba(var(--accent-rgb),.045)}
+  .generation-toggle{width:100%;background:transparent;display:flex;align-items:center;text-align:left;gap:11px;padding:11px 10px;border-radius:8px}
+  .generation-toggle:hover{background:#ffffff04}
+  .generation-marker{width:9px;height:9px;border:2px solid #536176;border-radius:50%;flex-shrink:0;margin-left:1px}
+  .selected .generation-marker{border-color:var(--accent);background:var(--accent);box-shadow:0 0 0 4px rgba(var(--accent-rgb),.08)}
+  .gen-info{flex:1;min-width:0}
+  .gen-title{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:500}
+  .gen-time{margin-top:5px;font-size:10px;color:#8d9bb0}
+  .tag{font-size:8px;line-height:1.5;padding:1px 5px;border-radius:4px;font-weight:500;background:#ffffff06;color:#9ba8bc;white-space:nowrap}
+  .tag.green{color:var(--green);background:#85d6b413}
+  .tag.amber{color:var(--amber);background:#edcc8a12}
+  .tag.blue{color:var(--accent);background:rgba(var(--accent-rgb),.12)}
+  .gen-counts{font-size:9px;white-space:nowrap;color:#98a5b8}
+  .positive{color:var(--green)}
+  .negative{color:var(--red)}
+  .generation-toggle>.icon{width:13px;height:13px;color:#738198}
+  .gen-details{padding:0 12px 12px 31px}
+  .detail-meta{display:flex;gap:8px;flex-wrap:wrap;font-size:9px;color:#a6b5c9;margin:1px 0 12px}
+  .detail-meta span{background:#ffffff04;padding:4px 7px;border-radius:4px}
+  .detail-summary{font-size:10px;color:#8f9fb4;margin-bottom:12px;line-height:1.5}
+  .detail-actions{display:flex;gap:7px}
+  .button{display:inline-flex;align-items:center;justify-content:center;gap:6px;border:1px solid #ffffff14;border-radius:6px;background:#ffffff04;color:#b4c1d4;font-size:10px;padding:7px 10px;white-space:nowrap}
+  .button .icon{width:13px;height:13px}
+  .button:hover{background:#ffffff0c;border-color:#ffffff25}
+  .button.primary{color:var(--accent);border-color:rgba(var(--accent-rgb),.24);background:rgba(var(--accent-rgb),.09)}
+  .button.primary:hover{background:rgba(var(--accent-rgb),.16)}
+  .button.danger{color:var(--red);border-color:#ed9d9d30}
+  .footer{height:42px;border-top:1px solid #ffffff0d;display:flex;align-items:center;gap:6px;padding:0 21px;color:#8f9db0;font-size:9px;background:#0000000c}
+  .footer .icon{width:13px;height:13px;color:#76869b}
+  .footer b{color:#b6c4d7;font-weight:400}
+  .footer .footer-actions{margin-left:auto;background:transparent;color:#a7b7cc;font-size:9px;display:flex;align-items:center;gap:6px}
+  .footer .divider{color:#4d5b6e;padding:0 3px}
+  .section-intro{display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:17px}
+  .section-intro h4{font-size:12px;font-weight:500;margin:0 0 5px}
+  .section-intro p{font-size:10px;color:#8e9eb3;margin:0;line-height:1.6}
+  .update-row{padding:12px 0;border-bottom:1px solid #ffffff0b;display:flex;gap:10px;align-items:center}
+  .package-icon{width:31px;height:31px;border:1px solid #ffffff0e;background:#ffffff04;border-radius:8px;color:#93a5be;display:grid;place-items:center;flex-shrink:0}
+  .update-info{flex:1;min-width:0}
+  .update-name{font-size:11px;margin-bottom:5px}
+  .update-revision{font-size:9px;color:#8293ab;display:flex;gap:5px;align-items:center}
+  .update-revision .icon{width:11px;height:11px}
+  .update-revision .new{color:var(--accent)}
+  .update-age{font-size:9px;color:#8797ad;margin-left:5px;white-space:nowrap}
+  .notice{display:flex;align-items:flex-start;gap:7px;padding:10px 11px;border-radius:7px;font-size:9px;line-height:1.7;color:#98a9bf;background:#ffffff03;border:1px solid #ffffff09;margin-top:15px}
+  .notice .icon{width:13px;height:13px;margin-top:1px}
+  .compare-pickers{display:flex;align-items:center;gap:10px}
+  .picker{flex:1;min-width:0}
+  .picker label{font-size:9px;color:#91a1b8;display:block;margin:0 0 7px}
+  select{background:#202937;border:1px solid #ffffff12;border-radius:7px;color:#c5d2e5;font-size:10px;padding:9px;width:100%}
+  .compare-pickers>.icon{margin-top:18px;color:#64778f;width:15px}
+  .diff-stats{display:flex;gap:14px;padding:14px 0;margin-bottom:4px;border-bottom:1px solid #ffffff0b;font-size:10px}
+  .diff-stats .changed{color:var(--accent)}
+  .diff-row{display:flex;align-items:center;gap:9px;padding:11px 1px;border-bottom:1px solid #ffffff09;font-size:10px}
+  .diff-row .package-name{flex:1}
+  .diff-row .versions{font-size:9px;color:#8f9fb6}
+  .diff-row .versions b{font-weight:400;color:#c0cee2}
+  .tool-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:17px}
+  .tool-card{background:#ffffff03;border:1px solid #ffffff10;border-radius:9px;padding:15px 12px;text-align:left}
+  .tool-card:hover{border-color:rgba(var(--accent-rgb),.3);background:rgba(var(--accent-rgb),.05)}
+  .tool-card>.icon{color:var(--accent);margin-bottom:15px;width:21px;height:21px}
+  .tool-card strong{display:block;font-weight:500;font-size:11px;margin-bottom:7px}
+  .tool-card small{font-size:9px;color:#8fa0b7;line-height:1.7;display:block}
+  .storage-card{border:1px solid #ffffff0e;border-radius:9px;padding:13px}
+  .storage-head{display:flex;align-items:center;justify-content:space-between;font-size:10px}
+  .storage-head span{color:#93a5bd;font-size:9px}
+  .storage-bar{height:5px;background:#ffffff0a;border-radius:3px;margin:13px 0 10px;overflow:hidden;display:flex}
+  .storage-bar .used{width:67.5%;background:#779ecc}
+  .storage-bar .reclaim{width:8.3%;background:var(--amber)}
+  .storage-key{display:flex;justify-content:space-between;color:#8fa0b7;font-size:9px}
+  .storage-key .amber{color:var(--amber)}
+  .overlay{position:absolute;inset:0;background:#141b26;z-index:5;display:flex;flex-direction:column}
+  .overlay-header{display:flex;align-items:center;gap:9px;padding:20px;border-bottom:1px solid #ffffff0d;font-size:14px;font-weight:500}
+  .overlay-header span{flex:1}
+  .overlay-body{padding:21px;overflow:auto}
+  .setting-group{margin-bottom:23px}
+  .setting-group h4{font-size:9px;letter-spacing:1.2px;text-transform:uppercase;color:#8b9cb5;margin:0 0 14px}
+  .setting-row{display:flex;align-items:center;gap:10px;justify-content:space-between;padding:10px 0;font-size:11px}
+  .setting-row small{display:block;font-size:9px;color:#8699b4;margin-top:5px}
+  .swatches{display:flex;gap:7px}
+  .swatch{width:20px;height:20px;border-radius:50%;background:var(--swatch);border:3px solid #141b26;outline:1px solid transparent}
+  .swatch[aria-pressed="true"]{outline-color:var(--swatch)}
+  .toggle{height:18px;width:32px;border-radius:20px;background:#344359;padding:3px}
+  .toggle:before{content:"";display:block;width:12px;height:12px;border-radius:50%;background:#91a4bf;transition:transform .15s}
+  .toggle[aria-checked="true"]{background:rgba(var(--accent-rgb),.25)}
+  .toggle[aria-checked="true"]:before{transform:translateX(14px);background:var(--accent)}
+  .input-field{width:100%;background:#ffffff04;border:1px solid #ffffff16;border-radius:6px;padding:10px;color:#bbcbe1;font-size:10px}
+  .field-label{font-size:10px;color:#a3b2c9;display:block;margin-bottom:7px}
+  .overlay-body p{font-size:11px;color:#9bacc4;line-height:1.8}
+  .command{width:100%;justify-content:flex-start;padding:12px;margin-bottom:8px}
+  .command span{flex:1;text-align:left}
+  .toast{position:absolute;bottom:50px;left:16px;right:16px;background:#293749;border:1px solid #93b5e03a;border-radius:8px;padding:11px 13px;box-shadow:0 6px 25px #0005;z-index:10;color:#d9e7f8;font-size:10px;line-height:1.6}
+  .empty{padding:30px 0;text-align:center;color:#91a4bd;font-size:11px;line-height:1.8}
+  .caption{display:flex;gap:10px;color:#8c97a8;line-height:1.65;font-size:11px;padding:15px 2px 0}
+  .caption>.icon{color:#60708a;width:15px;height:15px;margin-top:1px}
+  .page-footer{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-top:30px;padding:22px 0 27px;border-top:1px solid var(--line);color:#67758b;font-size:10px}
+  .page-footer span:last-child{color:#99a6b8}
+  @media(min-width:1450px){.desktop{height:765px}.widget{left:34px;right:34px}.view{height:368px}.tabs{gap:24px}.widget-header{padding:23px 25px 0}.view{padding-left:25px;padding-right:25px}.footer{padding:0 25px}.tab{font-size:12px}.gen-title{font-size:13px}}
+  @media(max-width:1120px){main{padding-left:24px;padding-right:24px}.desktops{gap:18px}.widget{left:13px;right:13px}.tabs{gap:13px}.tab{font-size:10px}.tab .icon{display:none}.widget-header{padding-left:16px;padding-right:16px}.view{padding-left:16px;padding-right:16px}.footer{padding:0 16px}.gen-counts{display:none}.detail-meta{gap:5px}.update-age{display:none}}
+  @media(max-width:850px){.desktops{grid-template-columns:minmax(0,640px);justify-content:center;gap:30px}.intro{align-items:flex-start;flex-direction:column}.tabs{gap:23px}.tab{font-size:11px}.tab .icon{display:block}.widget{left:22px;right:22px}.gen-counts{display:block}.desktop{height:734px}.topline{padding:0 24px}.preview-badge{font-size:10px}.brand span{display:none}.page-footer{flex-direction:column;align-items:flex-start;gap:9px}.update-age{display:block}}
+  @media(max-width:440px){main{padding:27px 12px 0}.topline{padding:0 16px;height:58px}.preview-badge{font-size:9px}.widget{left:9px;right:9px}.widget-header{padding:17px 13px 0}.view{padding-left:13px;padding-right:13px}.tabs{gap:15px}.tab{font-size:10px}.tab .icon{display:none}.text-link{font-size:9px}.gen-counts{display:none}.gen-title{gap:5px}.footer{font-size:8px;padding:0 12px}.footer .divider{padding:0}.platform-label .kind{font-size:9px}.desktop-bar{gap:9px}.update-age{display:none}.update-revision{font-size:8px}.desktop{height:723px}.view{height:355px}.caption{font-size:10px}}
+
+  /* Revision 02: retain the timeline and package interactions. */
+  .desktop{height:835px}
+  .view{height:450px}
+  .overlay-header>.mark{width:24px;height:24px}
+  .overlay>.working-status{flex-shrink:0;margin:0;border-radius:0;padding:11px 21px}
+  .mark{object-fit:contain}
+  .platform .mark{transform-origin:center}
+  .title-group p{display:flex;gap:8px;align-items:center}
+  .system-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px 12px;margin-top:13px;color:#a2b0c5;font-size:10px}
+  .system-meta>span{display:flex;gap:5px;align-items:center}
+  .system-meta .icon{width:12px;height:12px;color:#7286a3}
+  .system-meta .last-switch{font-size:9px;color:#8d9db4}
+  .system-state{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:13px;padding:10px 0 0;border-top:1px solid #ffffff0a;font-size:10px;color:#a3b2c8}
+  .system-state .text-link{margin-left:auto;padding-top:0;padding-bottom:0}
+  .booted-state{color:var(--green);display:flex;align-items:center;gap:6px}
+  .next-state{color:var(--amber)}
+  .system-state>.icon{width:12px;height:12px;color:#61738d}
+  .generation-list{position:relative;padding-left:24px}
+  .generation-list:before{content:"";position:absolute;left:8px;top:10px;bottom:26px;width:1.5px;background:linear-gradient(#edcc8aaa,#85d6b477 28%,#a07ace66 55%,#a07ace33);box-shadow:0 0 5px #ab7fdf15}
+  .generation{margin-bottom:5px}
+  .generation-toggle{position:relative;gap:8px;padding:11px 9px;min-height:61px}
+  .generation-marker,.selected .generation-marker{position:absolute;left:-20px;top:19px;margin:0;width:8px;height:8px;border:0;background:#a886d4;box-shadow:0 0 7px #a886d433;z-index:1}
+  .generation.next .generation-marker{background:var(--amber);box-shadow:0 0 9px #edcc8a66}
+  .generation.booted .generation-marker{background:var(--green);box-shadow:0 0 12px #85d6b466;animation:marker-bounce 2.5s ease-in-out infinite}
+  .generation.booted .generation-marker:after{content:"";position:absolute;inset:-5px;border:1.5px solid #85d6b499;border-radius:50%;box-shadow:0 0 9px #85d6b42e;transform-origin:center;animation:marker-pulse 2.5s ease-in-out infinite}
+  .generation.next .gen-number{color:var(--amber)}
+  .generation.booted .gen-number{color:var(--green)}
+  .gen-title{flex-wrap:wrap;gap:6px}
+  .gen-time{font-size:10px;margin-top:6px}
+  .gen-specs{display:flex;gap:5px;min-width:0;flex-wrap:wrap;margin-top:7px}
+  .gen-specs>span{font-family:Consolas,monospace;font-size:8px;color:#9abbd4;border:1px solid #7bafd022;border-radius:3px;padding:2px 4px;background:#7bafd008;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .gen-counts{font-variant-numeric:tabular-nums}
+  .generation-toggle>.icon{margin-left:auto}
+  .gen-details{padding:0 9px 12px}
+  .detail-actions{margin-top:11px;flex-wrap:wrap}
+  .timeline-help{margin:11px 0 0 24px;color:#8595ad;font-size:9px;line-height:1.7}
+  .generation .detail-summary{margin:1px 0 12px}
+  .package-browser{min-width:0;margin-top:10px}
+  .package-toolbar{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+  .package-heading{font-size:10px;color:#aab9ce;margin-right:auto;display:flex;align-items:center;gap:6px}
+  .package-search{display:flex;align-items:center;gap:5px;max-width:135px;min-width:0;padding:6px 8px;background:#ffffff04;border:1px solid #ffffff10;border-radius:5px}
+  .package-search .icon{width:11px;height:11px;color:#7589a5}
+  .package-search input{width:100%;min-width:0;font-size:9px;background:transparent;color:#c5d1e1;border:0;outline:0}
+  .package-search:focus-within{border-color:var(--accent)}
+  .change-filters{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:9px}
+  .change-filter{font-size:9px;padding:4px 7px;border:1px solid transparent;border-radius:5px;background:transparent;color:#99a9c0}
+  .change-filter[aria-pressed="true"]{background:#ffffff07;border-color:#ffffff14}
+  .change-filter[data-change-filter="added"]{color:var(--green)}
+  .change-filter[data-change-filter="removed"]{color:var(--red)}
+  .change-filter[data-change-filter="changed"]{color:var(--amber)}
+  .package-list{max-height:220px;overflow-y:auto;scrollbar-width:thin;scrollbar-color:#3d485a transparent;padding-right:3px}
+  .compare-results .package-list{max-height:none;overflow:visible;padding-right:0}
+  .package-entry{--tone:var(--amber);--wash:#edcc8a08;border:1px solid transparent;border-left:2px solid transparent;border-radius:5px;overflow:hidden;margin-bottom:3px}
+  .package-entry.added{--tone:var(--green);--wash:#85d6b409}
+  .package-entry.removed{--tone:var(--red);--wash:#ed9d9d09}
+  .package-entry:nth-child(even){background:#ffffff05}
+  .package-entry:hover{background:#ffffff05}
+  .package-entry[open]{border-color:#ffffff0b;border-left-color:var(--tone);background:var(--wash)}
+  .package-entry summary{display:grid;grid-template-columns:10px 17px minmax(55px,1fr) minmax(30px,auto) 53px 12px;gap:7px;align-items:center;list-style:none;padding:8px 6px;cursor:pointer;font-size:10px}
+  .package-entry summary::-webkit-details-marker{display:none}
+  .package-sign{color:var(--tone);font-weight:600;font-size:12px;text-align:center}
+  .package-app-icon{width:16px;height:16px;stroke:currentColor;color:var(--tone)}
+  .package-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d5dfed;font-weight:500;min-width:0}
+  .package-version{max-width:116px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#95a6be;font-size:9px;text-align:right}
+  .package-size{color:var(--tone);text-align:right;font-size:9px;white-space:nowrap}
+  .package-chevron{width:11px;height:11px;color:#7387a2;transition:transform .15s}
+  .package-entry[open] .package-chevron{transform:rotate(90deg)}
+  .package-details{padding:3px 11px 12px 31px}
+  .package-full-name{font-size:10px;color:#bdcce1;overflow-wrap:anywhere;margin:3px 0 10px;line-height:1.5}
+  .package-details dl{display:grid;grid-template-columns:63px minmax(0,1fr);gap:9px 10px;margin:0;font-size:9px;align-items:start}
+  .package-details dt{color:#8c9db5;margin:0;padding-top:2px}
+  .package-details dd{margin:0;color:var(--tone);min-width:0;overflow-wrap:anywhere;line-height:1.5}
+  .package-details .store-path{display:flex;align-items:flex-start;gap:5px;color:#a1b1c9}
+  .store-path code{min-width:0;flex:1;font-size:9px;overflow-wrap:anywhere}
+  .store-path .icon-button{width:22px;height:22px;margin-top:-3px}
+  .store-path .icon{width:12px;height:12px}
+  .source-link{color:#b6a1e4;text-decoration:none;display:inline-flex;align-items:center;gap:4px;max-width:100%;overflow-wrap:anywhere}
+  .source-link:hover{text-decoration:underline}
+  .source-link .icon{width:11px;height:11px}
+  .package-empty{font-size:10px;color:#8599b5;text-align:center;padding:14px}
+  .update-card{border:1px solid #ffffff0e;border-radius:9px;margin-bottom:9px;background:#ffffff03;overflow:hidden}
+  .update-card .update-row{padding:11px 10px;border:0;gap:8px}
+  .update-actions{display:flex;align-items:center;gap:5px}
+  .update-actions .icon-button{width:27px;height:27px;border:1px solid #ffffff0f;border-radius:6px;text-decoration:none}
+  .update-actions .preview-action{color:#b6a1e4;background:#b6a1e40d;border-color:#b6a1e42a}
+  .update-actions .update-action{color:var(--green);background:#85d6b40b;border-color:#85d6b42a}
+  .update-actions .source-action{color:#a8b8cf}
+  .update-actions .icon{width:13px;height:13px}
+  .update-preview{padding:0 10px 12px;border-top:1px solid #ffffff08}
+  .update-legend{display:flex;flex-wrap:wrap;gap:7px 13px;font-size:9px;color:#a0aec3;margin-bottom:13px}
+  .update-legend span{display:flex;align-items:center;gap:4px}
+  .update-legend .icon{width:11px;height:11px}
+  .working-status{display:none;position:relative;overflow:hidden;padding:9px 13px;margin-top:11px;border-radius:6px;background:rgba(var(--accent-rgb),.07);color:var(--accent);font-size:10px}
+  .working-status:after{content:"";position:absolute;left:0;bottom:0;height:2px;width:35%;background:var(--accent);animation:work-progress 1.4s ease-in-out infinite}
+  .is-working .working-status{display:block}
+  .is-working .mark{animation:flake-spin 2.6s linear infinite;filter:drop-shadow(0 0 5px #ae9cdd66)}
+  .is-working .widget .view{height:415px}
+  .is-working .widget{border-color:#a6baff55}
+  .widget.closed .mark{animation:none}
+  .no-glow .generation-marker,.no-glow .generation-marker:after,.no-glow .generation-list:before{box-shadow:none}
+  .platform[hidden] *,.motion-paused *{animation-play-state:paused!important}
+  .widget.closed .generation-marker,.widget.closed .generation-marker:after,.no-glow .generation-marker,.no-glow .generation-marker:after{animation:none}
+  @keyframes marker-bounce{0%,100%{transform:translateY(0)}50%{transform:translateY(-2px)}}
+  @keyframes marker-pulse{0%,100%{transform:scale(1);opacity:.45}50%{transform:scale(1.22);opacity:.85}}
+  @keyframes flake-spin{to{transform:rotate(360deg)}}
+  @keyframes work-progress{from{transform:translateX(-110%)}to{transform:translateX(400%)}}
+  @media(min-width:1450px){.view{height:450px}.is-working .widget .view{height:415px}}
+  @media(max-width:1120px){.update-card .update-row{gap:6px}.update-actions{gap:3px}.package-entry summary{gap:5px;grid-template-columns:9px 15px minmax(45px,1fr) 65px 49px 10px}.package-version{font-size:8px}}
+  @media(max-width:440px){.system-meta{font-size:9px;gap:7px 10px}.system-meta .last-switch{font-size:8px}.system-state{font-size:9px}.generation-toggle{padding-left:6px;padding-right:6px}.package-entry summary{grid-template-columns:9px 15px minmax(45px,1fr) 49px 10px}.package-version{display:none}.package-details{padding-left:16px}.package-details dl{grid-template-columns:52px minmax(0,1fr);gap:8px}.update-card .package-icon{width:25px;height:25px}.update-card .update-row{padding:10px 7px}.update-name{font-size:10px}.update-revision{font-size:8px}.update-actions .icon-button{width:24px;height:26px}.desktop{height:800px}.view{height:415px}.is-working .widget .view{height:380px}}
+
+  @media(prefers-reduced-motion:reduce){*,*:before,*:after{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<svg xmlns="http://www.w3.org/2000/svg" style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+<defs>
+  <symbol id="nix" viewBox="0 0 32 32"><g fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="square"><path id="branch" d="M16 3v10m0-5 5-3"/><use href="#branch" transform="rotate(60 16 16)"/><use href="#branch" transform="rotate(120 16 16)"/><use href="#branch" transform="rotate(180 16 16)"/><use href="#branch" transform="rotate(240 16 16)"/><use href="#branch" transform="rotate(300 16 16)"/></g></symbol>
+  <symbol id="refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 18 17"/></symbol>
+  <symbol id="settings" viewBox="0 0 24 24"><path d="m9 3-.7 2.2-2 .9L4 5.8 2 9l1.7 1.8v2.4L2 15l2 3.2 2.3-.3 2 .9L9 21h4l.7-2.2 2-.9 2.3.3 2-3.2-1.7-1.8v-2.4L20 9l-2-3.2-2.3.3-2-.9L13 3Z"/><circle cx="11" cy="12" r="3"/></symbol>
+  <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="shield" viewBox="0 0 24 24"><path d="m12 3 8 3v6c0 5-8 9-8 9S4 17 4 12V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+  <symbol id="right" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+  <symbol id="down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="arrow" viewBox="0 0 24 24"><path d="M4 12h16m-6-6 6 6-6 6"/></symbol>
+  <symbol id="history" viewBox="0 0 24 24"><path d="M3 4v5h5M3.5 9a9 9 0 1 1 0 7M12 7v5l3 2"/></symbol>
+  <symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
+  <symbol id="compare" viewBox="0 0 24 24"><circle cx="6" cy="5" r="2"/><circle cx="18" cy="19" r="2"/><path d="M6 7v12m12-2V5M9 16l-3 3-3-3M15 8l3-3 3 3"/></symbol>
+  <symbol id="grid" viewBox="0 0 24 24"><rect x="3" y="3" width="6" height="6" rx="1"/><rect x="15" y="3" width="6" height="6" rx="1"/><rect x="3" y="15" width="6" height="6" rx="1"/><rect x="15" y="15" width="6" height="6" rx="1"/></symbol>
+  <symbol id="search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/></symbol>
+  <symbol id="filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10m-7 6h4"/></symbol>
+  <symbol id="disk" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M3 14h18M16 17h2"/></symbol>
+  <symbol id="terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+  <symbol id="box" viewBox="0 0 24 24"><path d="m12 3 9 5v9l-9 5-9-5V8Zm0 10v9M3 8l9 5 9-5M8 5l9 5"/></symbol>
+  <symbol id="info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6m0-10v.2"/></symbol>
+  <symbol id="lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 5v2"/></symbol>
+  <symbol id="hash" viewBox="0 0 24 24"><path d="m9 3-3 18M18 3l-3 18M3 9h18M2 15h18"/></symbol>
+  <symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+  <symbol id="back" viewBox="0 0 24 24"><path d="M20 12H4m6-6-6 6 6 6"/></symbol>
+  <symbol id="folder" viewBox="0 0 24 24"><path d="M3 7V4h7l3 3h8v13H3Z"/></symbol>
+  <symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></symbol>
+  <symbol id="wifi" viewBox="0 0 24 24"><path d="M3 8a15 15 0 0 1 18 0M6 12a10 10 0 0 1 12 0m-9 4a5 5 0 0 1 6 0m-3 4h0"/></symbol>
+  <symbol id="volume" viewBox="0 0 24 24"><path d="M3 9h4l5-5v16l-5-5H3Zm13-1a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/></symbol>
+  <symbol id="battery" viewBox="0 0 24 24"><rect x="2" y="7" width="18" height="10" rx="2"/><path d="M23 10v4M5 10v4m3-4v4m3-4v4m3-4v4"/></symbol>
+  <symbol id="monitor" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M12 17v4m-5 0h10"/></symbol>
+  <symbol id="pin" viewBox="0 0 24 24"><path d="m8 3 8 0-1 7 3 3v2H6v-2l3-3ZM12 15v7"/></symbol>
+  <symbol id="more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+
+  <symbol id="external" viewBox="0 0 24 24"><path d="M14 3h7v7m0-7L10 14M10 4H4v16h16v-6"/></symbol>
+  <symbol id="copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M15 8V3H3v13h5"/></symbol>
+  <symbol id="clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4m8-4v4"/></symbol>
+  <symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="7" r="4"/><path d="M4 21v-2a8 8 0 0 1 16 0v2"/></symbol>
+  <symbol id="app-bitwarden" viewBox="0 0 24 24"><rect width="24" height="24" rx="5" fill="#2476ed" stroke="none"/><path d="M6 5h12v7c0 4-6 7-6 7s-6-3-6-7Z" fill="white" stroke="none"/><path d="M12 7h4v5c0 2-2 4-4 5Z" fill="#2476ed" stroke="none"/></symbol>
+  <symbol id="app-firefox" viewBox="0 0 24 24"><circle cx="12" cy="13" r="10" fill="#773cbe" stroke="none"/><path d="m19 2-1 6c6 7 0 15-8 14C1 21-1 11 5 5l1 5 4-3-1 5c-4 3-1 8 4 6 5-2 5-6 6-16Z" fill="#ff9e35" stroke="none"/><path d="M6 17c3 5 12 3 14-2-1 7-10 10-16 4Z" fill="#f66e45" stroke="none"/></symbol>
+  <symbol id="app-git" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3" transform="rotate(45 12 12)" fill="#ed704d" stroke="none"/><path d="m7 6 10 10M10 9v8" fill="none" stroke="white" stroke-width="1.7"/><g fill="white" stroke="none"><circle cx="10" cy="9" r="1.7"/><circle cx="10" cy="17" r="1.7"/><circle cx="17" cy="16" r="1.7"/></g></symbol>
+</defs>
+</svg>
+<header class="topline">
+  <div class="brand"><img class="mark" src="package/contents/ui/nixos-logo.svg" alt="">Nixdatifier <span>Design study / 02</span></div>
+  <div class="preview-badge"><span class="dot"></span> Interactive concept</div>
+</header>
+<main>
+  <div class="intro">
+    <div><h1>One widget. Both desktops.</h1><p>A calmer place for your NixOS generations, updates, and everything in between.</p></div>
+    <div class="switcher" role="group" aria-label="Desktop preview">
+      <button data-desktop="both" aria-pressed="true">Side by side</button>
+      <button data-desktop="kde" aria-pressed="false">KDE Plasma</button>
+      <button data-desktop="hyprland" aria-pressed="false">Hyprland</button>
+    </div>
+  </div>
+  <div class="desktops" id="desktops"></div>
+  <footer class="page-footer"><span>DESIGN PREVIEW · SAMPLE DATA · NO SYSTEM ACTIONS</span><span>Try the timeline, package rows, and refresh to see the flake animate.</span></footer>
+</main>
+<script>
+  'use strict';
+  const icon = (name, cls = 'icon') => name === 'nix' ? '<img class="' + cls + '" src="package/contents/ui/nixos-logo.svg" alt="">' : '<svg class="' + cls + '" aria-hidden="true"><use href="#' + name + '"/></svg>';
+  const button = (name, label, action, cls = '') => '<button class="icon-button ' + cls + '" title="' + label + '" aria-label="' + label + '" data-action="' + action + '">' + icon(name) + '</button>';
+  const generations = [
+    {id:661, time:'Today, 10:01', date:'11 September 2026', tags:['Next boot'], kind:'next', kernel:'cachyos-latest-lto-x86_64-v3-7.2.3'},
+    {id:660, time:'Yesterday, 13:41', date:'10 September 2026', tags:['Booted'], kind:'booted', kernel:'cachyos-latest-lto-x86_64-v3-7.2.3'},
+    {id:659, time:'10 Sep, 13:29', date:'10 September 2026', tags:[], kind:'history', kernel:'cachyos-latest-lto-x86_64-v3-7.2.3'},
+    {id:658, time:'08 Sep, 17:59', date:'8 September 2026', tags:[], kind:'history', kernel:'cachyos-latest-lto-x86_64-v3-7.2.2'}
+  ];
+  const inputs = [
+    {name:'nixpkgs',old:'8c2f91a',rev:'c04e87b',age:'2 hours ago',url:'https://github.com/NixOS/nixpkgs'},
+    {name:'home-manager',old:'a51b6c0',rev:'91de2f8',age:'5 hours ago',url:'https://github.com/nix-community/home-manager'},
+    {name:'hyprland',old:'f3198ac',rev:'b71e02d',age:'Yesterday',url:'https://github.com/hyprwm/Hyprland'}
+  ];
+  // Example snapshots, ordered like the generations above. No system data is read.
+  const packageCatalog = [
+    {name:'bitwarden-desktop',icon:'app-bitwarden',versions:['2026.8.0',null,null,null],sizes:[183296,0,0,0],homepage:'https://bitwarden.com/'},
+    {name:'apparmor-closure-rules-security.wrappers.rustnet',versions:['ε',null,null,null],sizes:[16.2,0,0,0]},
+    {name:'firefox',icon:'app-firefox',versions:['142.0','141.0','140.0','139.0'],sizes:[301568,297984,294912,291840],homepage:'https://www.mozilla.org/firefox/'},
+    {name:'git',icon:'app-git',versions:['2.51.0','2.50.1','2.50.0','2.49.0'],sizes:[41984,41472,40960,39936],homepage:'https://git-scm.com/'},
+    {name:'aider-chat',versions:[null,'0.86.1','0.86.1','0.85.0'],sizes:[0,2969.6,2969.6,2800]},
+    {name:'amp-cli',versions:[null,'0.0.1788367255-g70055c','0.0.1777725200','0.0.1766119000'],sizes:[0,107827.2,106800,105400]},
+    {name:'appstream',versions:[null,'1.1.3','1.1.3','1.1.2'],sizes:[0,6656,6656,6500]},
+    {name:'audit-tmpdir.sh',versions:[null,'ε','ε','ε'],sizes:[0,2.1,2.1,2.1]}
+  ];
+  const escapeHtml = value => String(value).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  function packageDiff(from,to) {
+    const a=generations.findIndex(g=>String(g.id)===String(from)),b=generations.findIndex(g=>String(g.id)===String(to));
+    if(a<0||b<0||a===b)return [];
+    return packageCatalog.flatMap((p,index)=>{
+      const old=p.versions[a],next=p.versions[b];
+      if(old===next&&p.sizes[a]===p.sizes[b])return [];
+      const type=old===null?'added':next===null?'removed':'changed',delta=p.sizes[b]-p.sizes[a];
+      const magnitude=Math.abs(delta),size=(delta<0?'−':'+')+(magnitude>=1024?(magnitude/1024).toFixed(1)+' MB':magnitude.toFixed(1)+' KB');
+      return [{...p,index,type,oldVersion:old,newVersion:next,size,version:next||old,path:'/nix/store/00000000000000000000000000000000-'+p.name+'-'+(next||old)}];
+    });
+  }
+  function packageBrowser(packages,label,scope) {
+    const counts={added:0,changed:0,removed:0};packages.forEach(p=>counts[p.type]++);
+    return '<section class="package-browser" data-package-scope="'+scope+'"><div class="package-toolbar"><span class="package-heading">'+escapeHtml(label)+' <span class="tag blue">'+packages.length+'</span></span><label class="package-search">'+icon('search')+'<input type="search" data-package-filter placeholder="Filter packages…" aria-label="Filter '+escapeHtml(label)+'"></label></div><div class="change-filters">'+[['all','All '+packages.length],['added','+ '+counts.added+' added'],['changed','~ '+counts.changed+' changed'],['removed','− '+counts.removed+' removed']].map(([type,text])=>'<button class="change-filter" data-change-filter="'+type+'" aria-pressed="'+(type==='all')+'">'+text+'</button>').join('')+'</div><div class="package-list">'+packages.map(p=>{
+      const versions=p.type==='changed'?p.oldVersion+' → '+p.newVersion:p.version;
+      return '<details class="package-entry '+p.type+'" data-package-name="'+escapeHtml(p.name)+'" data-change-type="'+p.type+'"><summary title="'+escapeHtml(p.name)+'"><span class="package-sign">'+(p.type==='added'?'+':p.type==='removed'?'−':'~')+'</span>'+icon(p.icon||'box','icon package-app-icon')+'<span class="package-name">'+escapeHtml(p.name)+'</span><span class="package-version mono">'+escapeHtml(versions)+'</span><span class="package-size mono">'+p.size+'</span>'+icon('right','icon package-chevron')+'</summary><div class="package-details"><div class="package-full-name">'+escapeHtml(p.name)+'</div><dl><dt>Version</dt><dd class="mono">'+escapeHtml(versions)+'</dd><dt>Size delta</dt><dd class="mono">'+p.size+'</dd><dt>Store path</dt><dd class="store-path"><code>'+escapeHtml(p.path)+'</code><button class="icon-button" data-copy-path="'+escapeHtml(p.path)+'" title="Copy sample store path" aria-label="Copy sample store path">'+icon('copy')+'</button></dd>'+(p.homepage?'<dt>Homepage</dt><dd><a class="source-link" href="'+p.homepage+'" target="_blank" rel="noopener noreferrer">'+p.homepage.replace('https://','')+icon('external')+'</a></dd>':'')+'<dt>nixpkgs</dt><dd><a class="source-link" href="https://github.com/NixOS/nixpkgs/search?q='+encodeURIComponent(p.name)+'" target="_blank" rel="noopener noreferrer">Find package source '+icon('external')+'</a></dd></dl></div></details>';
+    }).join('')+'</div><div class="package-empty" hidden>No matching package changes.</div></section>';
+  }
+  function filterPackages(browser) {
+    const query=browser.querySelector('[data-package-filter]').value.toLowerCase();
+    const type=browser.querySelector('[data-change-filter][aria-pressed="true"]').dataset.changeFilter;
+    let visible=0;browser.querySelectorAll('.package-entry').forEach(row=>{row.hidden=!row.dataset.packageName.toLowerCase().includes(query)||(type!=='all'&&row.dataset.changeType!==type);if(!row.hidden)visible++;});
+    browser.querySelector('.package-empty').hidden=visible>0;
+  }
+
+  const tabs = [['generations','history','Generations'],['updates','download','Updates'],['compare','compare','Compare'],['tools','grid','Tools']];
+  const states = {};
+  function desktopMarkup(host) {
+    const kde = host === 'kde';
+    const bar = kde
+      ? icon('nix','mark') + '<span class="bar-separator"></span><span class="bar-app blue">' + icon('folder') + '</span><span class="bar-app">' + icon('globe') + '</span><span class="bar-app">' + icon('terminal') + '</span><span class="bar-spacer"></span>' + icon('right') + '<button class="tray-toggle" data-action="toggle-widget" aria-label="Toggle Nixdatifier" aria-expanded="true">' + icon('nix','mark') + '</button>' + icon('wifi') + icon('volume') + '<div class="clock">14:32<br><small>11.09.26</small></div>'
+      : icon('nix','mark') + '<div class="workspaces"><b>01</b><span>02</span><span>03</span><span>04</span></div><span class="bar-spacer"></span><span>Fri, Sep 11 &nbsp; 14:32</span><span class="bar-spacer"></span><button class="tray-toggle" data-action="toggle-widget" aria-label="Toggle Nixdatifier" aria-expanded="true">' + icon('nix','mark') + '</button>' + icon('wifi') + icon('battery');
+    return '<section class="platform" data-host="' + host + '"><div class="platform-label"><h2><span class="index">' + (kde?'01':'02') + '</span>' + (kde?'KDE Plasma':'Hyprland') + '</h2><span class="kind">' + icon(kde?'monitor':'grid') + (kde?'Panel widget':'Tray + floating pill') + '</span></div><div class="desktop ' + host + '"><div class="mountain"></div>' + (kde?'<div class="wallpaper-caption"><strong>Friday</strong>11 SEPTEMBER</div>':'') + '<div class="desktop-bar">' + bar + '</div>' + (!kde?'<button class="panel-pill" data-action="toggle-widget" aria-label="Toggle Nixdatifier popup" aria-expanded="true">' + icon('nix','mark') + '<span>NixOS</span><span class="count">3 updates</span>' + icon('down') + '</button>':'') + '<article class="widget" aria-label="Nixdatifier ' + (kde?'KDE Plasma':'Hyprland') + ' preview"></article></div><div class="caption">' + icon(kde?'monitor':'grid') + '<span>' + (kde?'At home in your Plasma panel. A focused popup with native desktop controls.':'A compact pill or tray icon. The same views, in a floating Hyprland popup.') + '</span></div></section>';
+  }
+  document.getElementById('desktops').innerHTML = desktopMarkup('kde') + desktopMarkup('hyprland');
+  function renderWidget(host) {
+    const s=states[host],w=s.widget;
+    w.innerHTML='<header class="widget-header"><div class="title-row">'+icon('nix','mark')+'<div class="title-group"><h3>Nixdatifier</h3><p><span class="tag blue mono">#661</span><span>NixOS 26.05</span></p></div>'+button('refresh','Refresh system information','refresh')+button('pin','Pin popup open','pin',s.pinned?'active':'')+button('settings','Open settings','settings')+'</div><div class="system-meta"><span>'+icon('user')+'muddyblack</span><span>'+icon('clock')+'Up 1h 35m</span><span class="last-switch">'+icon('calendar')+'Switched 11 Sep, 10:01</span></div><div class="system-state"><span class="booted-state"><span class="dot"></span>Booted #660</span>'+icon('arrow')+'<span class="next-state">Next boot #661</span><button class="text-link" data-action="go-updates">3 updates '+icon('right')+'</button></div><div class="working-status" role="status" aria-live="polite"></div><nav class="tabs" role="tablist" aria-label="Nixdatifier views">'+tabs.map(t=>'<button class="tab" role="tab" id="'+host+'-tab-'+t[0]+'" aria-controls="'+host+'-view" aria-selected="'+(s.tab===t[0])+'" tabindex="'+(s.tab===t[0]?'0':'-1')+'" data-tab="'+t[0]+'">'+icon(t[1])+t[2]+(t[0]==='updates'?'<span class="badge">3</span>':'')+'</button>').join('')+'</nav></header><div class="view" id="'+host+'-view" role="tabpanel" tabindex="0" aria-labelledby="'+host+'-tab-'+s.tab+'"></div><footer class="footer">'+icon('disk')+'<b>113.7 GB</b><span>store</span><span class="divider">·</span><span>12.4 GB reclaimable</span><button class="footer-actions" data-action="commands">'+icon('terminal')+'Commands '+icon('down')+'</button></footer>';
+    renderView(host);syncBusy(host);
+  }
+
+  function generationRows(s) {
+    const query=s.query.trim().toLowerCase();
+    const shown=generations.filter(g=>('#'+g.id+' '+g.time+' '+g.date+' '+g.kernel+' '+g.tags.join(' ')+' '+packageDiff(g.id-1,g.id).map(p=>p.name).join(' ')).toLowerCase().includes(query));
+    return shown.map(g=>{
+      const selected=s.selected===g.id,previous=generations.find(x=>x.id===g.id-1),packages=previous?packageDiff(previous.id,g.id):[];
+      const counts={added:0,removed:0,changed:0};packages.forEach(p=>counts[p.type]++);
+      return '<div class="generation '+g.kind+(selected?' selected':'')+'"><button class="generation-toggle" data-generation="'+g.id+'" aria-expanded="'+selected+'"><span class="generation-marker"></span><div class="gen-info"><div class="gen-title"><span class="gen-number mono">#'+g.id+'</span>'+g.tags.map(tag=>'<span class="tag '+(g.kind==='booted'?'green':'amber')+'">'+tag+'</span>').join('')+'</div><div class="gen-time">'+g.time+'</div><div class="gen-specs"><span title="'+g.kernel+'">'+g.kernel+'</span><span>26.05 · 2026-09-07</span></div></div><div class="gen-counts"><span class="positive">+'+counts.added+'</span> &nbsp;<span class="negative">−'+counts.removed+'</span> &nbsp;~ '+counts.changed+'</div>'+icon(selected?'down':'right')+'</button>'+(selected?'<div class="gen-details">'+(previous?packageBrowser(packages,'vs. previous #'+previous.id,'generation-'+g.id):'<div class="detail-summary">No earlier generation in this sample history.</div>')+'<div class="detail-actions">'+(previous?'<button class="button primary" data-action="compare-generation">'+icon('compare')+'Compare generations</button>':'')+'<button class="button" data-action="generation-actions">Actions '+icon('down')+'</button></div></div>':'')+'</div>';
+    }).join('')||'<div class="empty">No matching generations.<br>Try a generation number, package, or date.</div>';
+  }
+  function updatesView(s) {
+    return '<div class="section-intro"><div><h4>New upstream changes</h4><p>3 flake inputs have updates available.</p></div><button class="button" data-action="check-updates">'+icon('refresh')+'Check</button></div><div class="update-legend"><span style="color:#b6a1e4">'+icon('compare')+'Preview changes</span><span style="color:var(--green)">'+icon('refresh')+'Update only this input</span><span>'+icon('external')+'Open source</span></div><div class="subheading">Flake inputs<span class="check-time">'+s.checked+'</span></div>'+inputs.map((u,i)=>'<section class="update-card"><div class="update-row"><span class="package-icon">'+icon(i===0?'box':i===1?'folder':'monitor')+'</span><div class="update-info"><div class="update-name">'+u.name+'<span class="update-age">'+u.age+'</span></div><div class="update-revision mono">'+u.old+icon('arrow')+'<span class="new">'+u.rev+'</span></div></div><div class="update-actions"><button class="icon-button preview-action" data-preview-input="'+i+'" aria-expanded="'+(s.previewInput===i)+'" title="Preview '+u.name+' package changes" aria-label="Preview '+u.name+' package changes">'+icon('compare')+'</button><button class="icon-button update-action" data-update-input="'+i+'" title="Update only '+u.name+' in the lock file" aria-label="Update only '+u.name+'">'+icon('refresh')+'</button><a class="icon-button source-action" href="'+u.url+'" target="_blank" rel="noopener noreferrer" title="Open '+u.name+' source repository" aria-label="Open '+u.name+' source repository">'+icon('external')+'</a></div></div>'+(s.previewInput===i?'<div class="update-preview">'+packageBrowser(packageDiff(660,661).filter((p,index)=>i===0||index%2===i-1),'Package preview','input-'+i)+'</div>':'')+'</section>').join('')+'<div class="notice">'+icon('info')+'<span>Update individual inputs now; rebuild when you’re ready to apply them.</span></div>';
+  }
+  function compareResults(s) {
+    if(s.from===s.to)return '<div class="empty">'+icon('check')+'<br>Same generation. No changes to compare.</div>';
+    return packageBrowser(packageDiff(s.from,s.to),'Package changes','comparison')+'<div class="notice">'+icon('info')+'<span>Sample changes between #'+s.from+' and #'+s.to+'. Click any package to inspect its version, size, store path, and source.</span></div>';
+  }
+
+  function renderView(host) {
+    const s=states[host], view=s.widget.querySelector('.view');
+    if(s.tab==='generations') view.innerHTML='<div class="toolbar"><label class="search">' + icon('search') + '<input type="search" placeholder="Search generations, packages, dates…" aria-label="Search generations"><span class="key">/</span></label><button class="icon-button" title="Generation display options" aria-label="Generation display options" data-action="generation-filter">' + icon('filter') + '</button></div><div class="subheading">System history<span>4 generations</span></div><div class="generation-list">' + generationRows(s) + '</div><p class="timeline-help">Select a generation to inspect its package changes.</p>';
+    if(s.tab==='updates') view.innerHTML=updatesView(s);
+    if(s.tab==='compare') view.innerHTML='<div class="section-intro"><div><h4>See what changed</h4><p>Compare the packages in two system generations.</p></div></div><div class="compare-pickers">' + ['from','to'].map((side,i)=>(i?icon('arrow'):'') + '<div class="picker"><label for="' + host + '-' + side + '">' + (i?'To':'From') + '</label><select id="' + host + '-' + side + '" data-compare="' + side + '">' + generations.map(g=>'<option value="' + g.id + '"' + (String(g.id)===s[side]?' selected':'') + '>#' + g.id + (g.kind==='booted'?' · Booted':g.kind==='next'?' · Next boot':' · '+g.time.split(',')[0]) + '</option>').join('') + '</select></div>').join('') + '</div><div class="compare-results">' + compareResults(s) + '</div>';
+    if(s.tab==='tools') view.innerHTML='<div class="section-intro"><div><h4>A few useful things</h4><p>Your system utilities, in one place.</p></div></div><div class="tool-grid"><button class="tool-card" data-action="secrets">' + icon('lock') + '<strong>Secrets</strong><small>Inspect deployed secrets<br>and their source paths.</small></button><button class="tool-card" data-action="hash">' + icon('hash') + '<strong>Hash calculator</strong><small>Get a Nix hash for a<br>URL or a local file.</small></button></div><div class="storage-card"><div class="storage-head">Nix store<span>150 GB volume</span></div><div class="storage-bar"><span class="used"></span><span class="reclaim"></span></div><div class="storage-key"><span>113.7 GB used</span><span class="amber">12.4 GB reclaimable</span></div></div><button class="text-link" data-action="cleanup" style="margin-top:10px">Clean up old generations ' + icon('right') + '</button>';
+    if(s.tab==='generations') view.querySelector('.toolbar input').value=s.query;
+    syncBusy(host);
+  }
+  function syncBusy(host) {
+    const s=states[host];s.platform.classList.toggle('is-working',!!s.busyLabel);
+    s.widget.setAttribute('aria-busy',!!s.busyLabel);
+    s.widget.querySelectorAll('.working-status').forEach(status=>status.textContent=s.busyLabel);
+    s.widget.querySelectorAll('[data-preview-input],[data-update-input],[data-action="refresh"],[data-action="check-updates"],[data-action="demo-action"],[data-action="demo-hash"]').forEach(b=>b.disabled=!!s.busyLabel);
+    const pill=s.platform.querySelector('.panel-pill .count');if(pill)pill.textContent=s.busyLabel?'Working…':'3 updates';
+  }
+  function startWork(host,label,complete) {
+    const s=states[host];if(s.busyLabel)return toast(host,s.busyLabel);
+    s.busyLabel=label;syncBusy(host);
+    s.workTimer=setTimeout(()=>{s.busyLabel='';if(complete)complete();syncBusy(host);toast(host,'Preview complete. No system commands were run.');},3200);
+  }
+  async function copySamplePath(host,path) {
+    try {
+      if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(path);
+      else {
+        const field=document.createElement('textarea');field.value=path;field.style.cssText='position:fixed;opacity:0';states[host].widget.append(field);field.select();
+        const copied=document.execCommand('copy');field.remove();if(!copied)throw new Error('Clipboard unavailable');
+      }
+      toast(host,'Sample store path copied.');
+    } catch {toast(host,'Clipboard unavailable here. Select and copy the store path from the expanded row.');}
+  }
+  function setTab(host, tab) {states[host].tab=tab;renderWidget(host);}
+  function toast(host, text) {
+    const s=states[host];s.widget.querySelector('.toast')?.remove();clearTimeout(s.toastTimer);
+    const el=document.createElement('div');el.className='toast';el.setAttribute('role','status');el.textContent=text;s.widget.append(el);
+    s.toastTimer=setTimeout(()=>el.remove(),4500);
+  }
+  function overlay(host,title,body) {
+    const s=states[host];s.widget.querySelector('.overlay')?.remove();
+    s.returnFocus=document.activeElement;
+    const el=document.createElement('section');el.className='overlay';el.setAttribute('role','dialog');el.setAttribute('aria-modal','true');el.setAttribute('aria-label',title);
+    el.innerHTML='<div class="overlay-header">' + button('back','Back to widget','close-overlay') + icon('nix','mark') + '<span>' + title + '</span>' + button('close','Close dialog','close-overlay') + '</div><div class="working-status" role="status" aria-live="polite"></div><div class="overlay-body">' + body + '</div>';
+    for(const child of s.widget.children) child.inert=true;
+    s.widget.append(el);syncBusy(host);el.querySelector('button').focus();
+  }
+  function closeOverlay(host) {
+    const s=states[host];s.widget.querySelector('.overlay')?.remove();
+    for(const child of s.widget.children) child.inert=false;
+    if(s.returnFocus?.isConnected) s.returnFocus.focus();
+  }
+  function settings(host) {
+    const s=states[host];
+    overlay(host,'Settings','<div class="setting-group"><h4>Appearance</h4><div class="setting-row"><div>Accent color<small>A shared visual language, your own color.</small></div><div class="swatches">' + [['blue','#91bcff'],['mint','#85d6b4'],['lavender','#bea5eb']].map(([name,color])=>'<button class="swatch" style="--swatch:' + color + '" aria-label="' + name + ' accent" aria-pressed="' + (s.accent===name) + '" data-accent="' + name + '"></button>').join('') + '</div></div><div class="setting-row"><div>Timeline glow<small>Glow and gently animate the booted marker.</small></div><button class="toggle" role="switch" aria-label="Timeline glow" aria-checked="' + s.glow + '" data-action="glow"></button></div><div class="setting-row"><div>Translucent background<small>Let a little of your desktop through.</small></div><button class="toggle" role="switch" aria-label="Translucent background" aria-checked="' + s.translucent + '" data-action="transparency"></button></div>' + (host==='hyprland'?'<div class="setting-row"><div>Show floating pill<small>The tray icon is always available.</small></div><button class="toggle" role="switch" aria-label="Show floating pill" aria-checked="' + s.pill + '" data-action="pill"></button></div>':'') + '</div><div class="setting-group"><h4>System</h4><label class="field-label" for="' + host + '-flake">Flake directory</label><input id="' + host + '-flake" class="input-field mono" value="/etc/nixos" readonly><div class="setting-row"><div>Check for updates<small>Automatic checks while the widget is running.</small></div><span class="tag blue">Every hour</span></div></div><div class="notice">' + icon('info') + '<span>Appearance controls work in this preview. System settings are sample values.</span></div>');
+  }
+  function handleAction(host, action, target) {
+    const s=states[host];
+    if(action==='toggle-widget') {
+      s.open=!s.open;s.widget.classList.toggle('closed',!s.open);s.widget.inert=!s.open;
+      s.platform.querySelectorAll('[data-action="toggle-widget"]').forEach(b=>b.setAttribute('aria-expanded',s.open));return;
+    }
+    if(action==='go-updates') return setTab(host,'updates');
+    if(action==='settings') return settings(host);
+    if(action==='close-overlay') return closeOverlay(host);
+    if(action==='refresh'||action==='check-updates') return startWork(host,action==='refresh'?'Refreshing system information…':'Checking flake inputs…',()=>{s.checked='Checked just now';s.widget.querySelector('.check-time')?.replaceChildren(document.createTextNode(s.checked));});
+    if(action==='glow'){s.glow=!s.glow;s.widget.classList.toggle('no-glow',!s.glow);target.setAttribute('aria-checked',s.glow);return;}
+
+    if(action==='pin') {s.pinned=!s.pinned;target.classList.toggle('active',s.pinned);target.setAttribute('aria-pressed',s.pinned);toast(host,s.pinned?'Popup pinned. It will stay open when you click the desktop.':'Popup unpinned. Click the desktop to dismiss it.');return;}
+    if(action==='transparency') {s.translucent=!s.translucent;s.widget.classList.toggle('opaque',!s.translucent);target.setAttribute('aria-checked',s.translucent);return;}
+    if(action==='pill') {s.pill=!s.pill;s.platform.querySelector('.panel-pill').hidden=!s.pill;s.platform.querySelector('.panel-pill').style.display=s.pill?'':'none';target.setAttribute('aria-checked',s.pill);return;}
+    if(action==='compare-generation') {s.to=String(s.selected||661);s.from=String(Math.max(658,Number(s.to)-1));return setTab(host,'compare');}
+
+    if(action==='generation-actions') return overlay(host,'Generation #' + s.selected,'<p>Choose how you want to use this generation.</p><button class="button command" data-action="demo-action">' + icon('check') + '<span>Activate this generation</span>' + icon('right') + '</button><button class="button command" data-action="demo-action">' + icon('history') + '<span>Use on next boot</span>' + icon('right') + '</button><button class="button danger command" data-action="demo-action"><span>Delete generation</span>' + icon('right') + '</button><div class="notice">' + icon('info') + 'Preview only. No system commands will run.</div>');
+    if(action==='generation-filter') return overlay(host,'System history','<p>Search by generation number, date, kernel, or package name. Select a row to see its details.</p><div class="setting-row"><span>Generations in this preview</span><span class="tag blue">4</span></div><div class="setting-row"><span>Sort order</span><span class="tag">Newest first</span></div>');
+    if(action==='commands') return overlay(host,'Your commands','<p>Quick access to your pinned terminal commands.</p><button class="button command" data-action="demo-action">' + icon('terminal') + '<span>Update flake</span><small class="mono">nix flake update</small></button><button class="button command" data-action="demo-action">' + icon('terminal') + '<span>Rebuild system</span><small class="mono">upnix</small></button><div class="notice">' + icon('info') + 'Commands are illustrated here. Nothing executes on your system.</div>');
+    if(action==='cleanup') return overlay(host,'Clean up the Nix store','<div class="section-intro"><div><h4>12.4 GB could be reclaimed</h4><p>Keep the current generation and remove older unused paths.</p></div></div><button class="button primary" data-action="demo-action">Preview cleanup</button><div class="notice">' + icon('info') + 'This is a sample estimate. No files will be deleted.</div>');
+    if(action==='secrets') return overlay(host,'Secrets','<div class="section-intro"><div><h4>Deployed secrets</h4><p>Managed by sops-nix · /run/secrets</p></div><span class="tag green">3 available</span></div>' + ['wifi-password','github-token','backup-key'].map(name=>'<div class="update-row"><span class="package-icon">' + icon('lock') + '</span><div class="update-info"><div class="update-name">' + name + '</div><div class="update-revision mono">/run/secrets/' + name + '</div></div><span class="tag green">Present</span></div>').join('') + '<div class="notice">' + icon('info') + 'Example names and paths. Secret contents are never shown.</div>');
+    if(action==='hash') return overlay(host,'Hash calculator','<p>Calculate a Nix-compatible hash for a source.</p><label class="field-label" for="' + host + '-url">Source URL</label><input class="input-field" id="' + host + '-url" placeholder="https://example.com/source.tar.gz"><button class="button primary" style="margin-top:13px" data-action="demo-hash">' + icon('hash') + 'Calculate hash</button><div class="notice">' + icon('info') + 'This concept demonstrates the form. It does not fetch URLs.</div>');
+    if(action==='demo-hash') return startWork(host,'Calculating source hash…');
+    if(action==='demo-action') return startWork(host,target.textContent.trim()+'…');
+  }
+  ['kde','hyprland'].forEach(host=>{
+    const platform=document.querySelector('[data-host="' + host + '"]');
+    states[host]={platform,widget:platform.querySelector('.widget'),tab:'generations',selected:null,query:'',from:'660',to:'661',accent:'blue',translucent:true,glow:true,pill:true,open:true,pinned:false,checked:'Checked 4 min ago',busyLabel:'',previewInput:null};
+    renderWidget(host);
+    platform.addEventListener('click',e=>{
+      const target=e.target.closest('button');
+      if(!target) {
+        if(!e.target.closest('.widget') && e.target.closest('.desktop') && states[host].open && !states[host].pinned) handleAction(host,'toggle-widget',null);
+        return;
+      }
+      const d=target.dataset,s=states[host];
+      if(d.tab){setTab(host,d.tab);s.widget.querySelector('[data-tab="' + d.tab + '"]').focus();}
+      else if(d.generation){s.selected=s.selected===Number(d.generation)?null:Number(d.generation);renderView(host);s.widget.querySelector('[data-generation="' + d.generation + '"]').focus({preventScroll:true});}
+      else if(d.action) handleAction(host,d.action,target);
+      else if(d.copyPath) copySamplePath(host,d.copyPath);
+      else if(d.changeFilter){const browser=target.closest('.package-browser');browser.querySelectorAll('[data-change-filter]').forEach(b=>b.setAttribute('aria-pressed',b===target));filterPackages(browser);}
+      else if(d.updateInput!==undefined){const u=inputs[Number(d.updateInput)];startWork(host,'Updating only '+u.name+'…');}
+      else if(d.accent) {
+        const colors={blue:['#91bcff','145,188,255'],mint:['#85d6b4','133,214,180'],lavender:['#bea5eb','190,165,235']};
+        s.accent=d.accent;s.widget.style.setProperty('--accent',colors[d.accent][0]);s.widget.style.setProperty('--accent-rgb',colors[d.accent][1]);
+        s.widget.querySelectorAll('[data-accent]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.accent===d.accent));
+      }
+      else if(d.previewInput!==undefined) {
+        const i=Number(d.previewInput);
+        if(s.previewInput===i){s.previewInput=null;renderView(host);return;}
+        startWork(host,'Previewing '+inputs[i].name+' package changes…',()=>{s.previewInput=i;if(s.tab==='updates')renderView(host);});
+      }
+    });
+
+    platform.addEventListener('input',e=>{
+      if(e.target.matches('[data-package-filter]')){filterPackages(e.target.closest('.package-browser'));return;}
+      if(e.target.matches('.toolbar input[type="search"]')){states[host].query=e.target.value;states[host].widget.querySelector('.generation-list').innerHTML=generationRows(states[host]);}
+    });
+    platform.addEventListener('change',e=>{
+      if(e.target.dataset.compare){states[host][e.target.dataset.compare]=e.target.value;states[host].widget.querySelector('.compare-results').innerHTML=compareResults(states[host]);}
+    });
+    platform.addEventListener('keydown',e=>{
+      const s=states[host],dialog=s.widget.querySelector('.overlay');
+      if(dialog && e.key==='Tab') {
+        const focusable=[...dialog.querySelectorAll('button,input,select,a[href],summary,[tabindex="0"]')].filter(el=>!el.disabled);
+        const first=focusable[0],last=focusable[focusable.length-1];
+        if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+        else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+      }
+      if(e.key==='Escape') {if(dialog)closeOverlay(host);else if(s.open){handleAction(host,'toggle-widget',null);platform.querySelector('.tray-toggle').focus();}e.preventDefault();}
+      if(e.target.matches('[role="tab"]') && ['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){
+        e.preventDefault();const index=tabs.findIndex(t=>t[0]===s.tab),next=e.key==='Home'?0:e.key==='End'?3:(index+(e.key==='ArrowRight'?1:3))%4;
+        setTab(host,tabs[next][0]);s.widget.querySelector('[data-tab="' + s.tab + '"]').focus();
+      }
+      if(e.key==='/'&&!dialog&&!e.target.matches('input,select')){e.preventDefault();if(s.tab!=='generations')setTab(host,'generations');s.widget.querySelector('input[type="search"]').focus();}
+    });
+  });
+  document.addEventListener('visibilitychange',()=>document.body.classList.toggle('motion-paused',document.hidden));
+  document.querySelectorAll('[data-desktop]').forEach(b=>b.addEventListener('click',()=>{
+    const mode=b.dataset.desktop;document.querySelectorAll('[data-desktop]').forEach(el=>el.setAttribute('aria-pressed',el===b));
+    document.getElementById('desktops').classList.toggle('single',mode!=='both');
+    document.querySelectorAll('.platform').forEach(p=>p.hidden=mode!=='both'&&p.dataset.host!==mode);
+  }));
+</script>
+</body>
+</html>

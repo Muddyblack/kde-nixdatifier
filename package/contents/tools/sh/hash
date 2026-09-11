@@ -1,52 +1,67 @@
 #!/usr/bin/env bash
 # Usage: hash <mode> <input>
-# Modes: url | github | file | store
-# Outputs one line: the hash, or "ERROR: <message>"
+# Modes: url | zip | github | file | store
+# Outputs the hash as the tool reports it, then its SRI form (sha256-…) on a
+# second line when Nix can convert it. Failures print one "ERROR: <message>" line.
 mode="$1"
 input="$2"
 export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+
+emit() {
+    local hash="$1" bare="${1#sha256:}"
+    printf '%s\n' "$hash"
+    # nix-prefetch-url prints Nix base32 and sha256sum prints hex, so the SRI
+    # form has to come from Nix itself. `nix hash convert` needs Nix >= 2.19;
+    # older releases only ship the now-deprecated `nix hash to-sri`.
+    nix --extra-experimental-features nix-command hash convert --hash-algo sha256 --to sri "$bare" 2>/dev/null \
+        || nix --extra-experimental-features nix-command hash to-sri --type sha256 "$bare" 2>/dev/null \
+        || true
+}
 
 case "$mode" in
     url)
         # nix-prefetch-url emits the sha256 on stdout; stderr has progress noise
         result=$(nix-prefetch-url --type sha256 "$input" 2>/dev/null)
         if [ -z "$result" ]; then
-            # fallback: try nix store prefetch-file (Nix 2.4+)
+            # fallback: nix store prefetch-file (Nix 2.4+) already reports SRI
             result=$(nix store prefetch-file --hash-type sha256 --json "$input" 2>/dev/null | grep -o '"hash":"[^"]*"' | cut -d'"' -f4)
         fi
-        [ -n "$result" ] && echo "$result" || echo "ERROR: could not fetch URL"
+        [ -n "$result" ] && emit "$result" || echo "ERROR: could not fetch URL"
         ;;
     zip)
         # fetchzip / fetchTarball — unpack then hash
         result=$(nix-prefetch-url --type sha256 --unpack "$input" 2>/dev/null)
-        [ -n "$result" ] && echo "$result" || echo "ERROR: could not fetch/unpack URL"
+        [ -n "$result" ] && emit "$result" || echo "ERROR: could not fetch/unpack URL"
         ;;
     github)
         # input format: owner/repo/rev  (rev can be tag or commit)
-        owner=$(echo "$input" | cut -d'/' -f1)
-        repo=$(echo "$input"  | cut -d'/' -f2)
-        rev=$(echo "$input"   | cut -d'/' -f3-)
-        if [ -z "$owner" ] || [ -z "$repo" ] || [ -z "$rev" ]; then
+        owner=${input%%/*}
+        rest=${input#*/}
+        repo=${rest%%/*}
+        rev=${rest#*/}
+        if [[ "$input" != */*/* || -z "$owner" || -z "$repo" || -z "$rev" ]]; then
             echo "ERROR: format must be owner/repo/rev"
             exit 0
         fi
         url="https://github.com/${owner}/${repo}/archive/${rev}.tar.gz"
         result=$(nix-prefetch-url --type sha256 --unpack "$url" 2>/dev/null)
-        [ -n "$result" ] && echo "$result" || echo "ERROR: could not fetch GitHub archive"
+        [ -n "$result" ] && emit "$result" || echo "ERROR: could not fetch GitHub archive"
         ;;
     file)
         if [ ! -f "$input" ]; then
             echo "ERROR: file not found: $input"
             exit 0
         fi
-        sha256sum "$input" 2>/dev/null | awk '{print $1}'
+        result=$(sha256sum "$input" 2>/dev/null | awk '{print $1}')
+        [ -n "$result" ] && emit "$result" || echo "ERROR: could not read file"
         ;;
     store)
         if [ ! -e "$input" ]; then
             echo "ERROR: store path not found: $input"
             exit 0
         fi
-        nix-store -q --hash "$input" 2>/dev/null || echo "ERROR: nix-store query failed"
+        result=$(nix-store -q --hash "$input" 2>/dev/null)
+        [ -n "$result" ] && emit "$result" || echo "ERROR: nix-store query failed"
         ;;
     *)
         echo "ERROR: unknown mode '$mode'"

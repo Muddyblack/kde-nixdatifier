@@ -1,5 +1,5 @@
 {
-  description = "NixOS Generation Explorer — KDE Plasma 6 widget for managing NixOS generations, package diffs, flake updates, and secrets";
+  description = "NixOS Generation Explorer — KDE Plasma 6 and Hyprland widgets for managing NixOS generations, package diffs, flake updates, and secrets";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -16,13 +16,53 @@
     {
       # ── installable package ────────────────────────────────────────────────
       packages = forAllSystems (system:
-        let pkgs = pkgsFor system; in
+        let
+          pkgs = pkgsFor system;
+          runtime = with pkgs; [ bash nix jq git coreutils util-linux findutils gnugrep gnused gawk inotify-tools libnotify polkit ];
+          runtimePath = pkgs.lib.makeBinPath runtime;
+          tray = pkgs.qt6.callPackage ./tray/package.nix { inherit version; };
+        in
         {
+          inherit tray;
+          hyprland = pkgs.stdenvNoCC.mkDerivation {
+            pname = "nixdatifier-hyprland";
+            inherit version;
+            src = ./.;
+            nativeBuildInputs = [ pkgs.makeWrapper ];
+            dontConfigure = true;
+            dontBuild = true;
+            installPhase = ''
+              runHook preInstall
+              dest="$out/share/nixdatifier"
+              mkdir -p "$dest" "$out/bin"
+              cp -r package hyprland shell.qml "$dest/"
+              cat > "$out/bin/nixdatifier-hyprland" <<SCRIPT
+              #!${pkgs.bash}/bin/bash
+              set -euo pipefail
+              export PATH=${runtimePath}:\$PATH
+              export QT_QUICK_CONTROLS_STYLE=Fusion
+              runtime_dir="\''${XDG_RUNTIME_DIR:-/tmp}/nixdatifier-\$USER"
+              mkdir -p "\$runtime_dir"
+              chmod 700 "\$runtime_dir"
+              # A previous session may have died mid-operation; don't let the tray start from its state.
+              rm -f "\$runtime_dir/status.json"
+              ${tray}/bin/nixdatifier-tray ${pkgs.quickshell}/bin/qs "$dest" "\$runtime_dir/status.json" "$dest/package/icon-emblem.svg" &
+              tray_pid=\$!
+              trap 'kill "\$tray_pid" 2>/dev/null || true' EXIT
+              ${pkgs.quickshell}/bin/qs --no-duplicate --path "$dest" "\$@"
+              SCRIPT
+              chmod +x "$out/bin/nixdatifier-hyprland"
+              runHook postInstall
+            '';
+            meta.mainProgram = "nixdatifier-hyprland";
+            meta.platforms = pkgs.lib.platforms.linux;
+          };
           default = pkgs.stdenvNoCC.mkDerivation {
             pname   = "nixos-generation-explorer";
             inherit version;
             src = ./package;
 
+            nativeBuildInputs = [ pkgs.makeWrapper ];
             dontConfigure = true;
             dontBuild     = true;
 
@@ -33,6 +73,11 @@
               plasmoid="$out/share/plasma/plasmoids/${pluginId}"
               mkdir -p "$plasmoid"
               cp -r . "$plasmoid/"
+              for helper in "$plasmoid"/contents/tools/sh/*; do
+                if [ -f "$helper" ] && [ -x "$helper" ]; then
+                  wrapProgram "$helper" --prefix PATH : ${runtimePath}
+                fi
+              done
 
               # Register icon in hicolor theme so Plasma Widget Explorer picks it up
               mkdir -p "$out/share/icons/hicolor/256x256/apps"
@@ -61,6 +106,10 @@
       apps = forAllSystems (system:
         let pkgs = pkgsFor system; in
         {
+          hyprland = {
+            type = "app";
+            program = "${self.packages.${system}.hyprland}/bin/nixdatifier-hyprland";
+          };
           view = {
             type = "app";
             program = toString (pkgs.writeShellScript "view" ''
@@ -78,7 +127,7 @@
               name="$(basename "$here")"
               out="$here/$name-$ver.plasmoid"
               rm -f "$out"
-              (cd "$here/package" && ${pkgs.zip}/bin/zip -r "$out" . -x '*.swp' '*~')
+              (cd "$here/package" && ${pkgs.zip}/bin/zip -r "$out" . -x '*.swp' '*~' 'icon-emblem.png')
               echo "wrote $out"
             '');
           };
@@ -94,6 +143,10 @@
               qt6.qtdeclarative      # qmllint + qmlformat
               kdePackages.kpackage   # kpackagetool6
               kdePackages.plasma-sdk # plasmoidviewer
+              quickshell
+              qt6.qtbase
+              qt6.qtsvg
+              cmake
               pre-commit
               zip                    # needed by pack.sh
             ];

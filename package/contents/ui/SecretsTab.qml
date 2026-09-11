@@ -1,370 +1,174 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import QtQuick.Layouts
+import "shared" as UI
+import "components"
 
 Item {
     id: secretsTab
 
-    // ── Required properties ───────────────────────────────────────────────────
     required property color textColor
     required property real fs
     required property var deployedSecrets
     required property var sourceSecrets
     required property string activeViewMode
 
-    function svg(name) {
-        return Qt.resolvedUrl("assets/" + name + ".svg");
-    }
-    function fpx(n) {
-        return Math.max(1, Math.round(n / 9.0 * Kirigami.Theme.smallFont.pixelSize * fs));
-    }
-
     anchors.fill: parent
     visible: activeViewMode === "secrets"
 
-    readonly property bool nothingConfigured: deployedSecrets.path === "" && sourceSecrets.path === ""
+    readonly property var deployed: deployedSecrets
+    readonly property var source: sourceSecrets
+    readonly property bool sourcePlaintext: source.exists && source.encKind === "plain"
 
-    // helper: human-readable encryption label
+    function countLabel(n) {
+        return n === 1 ? qsTr("1 secret") : qsTr("%1 secrets").arg(n);
+    }
     function encLabel(s) {
-        if (!s.exists)
-            return "";
-        const k = s.encKind || "";
-        const t = s.encType || "";
-        if (k === "encrypted") {
-            const tLabel = t === "age" ? "age" : t === "pgp" ? "PGP" : t === "mixed" ? "age+PGP" : t;
-            return "SOPS" + (tLabel ? " / " + tLabel : "");
-        }
-        if (k === "plain")
-            return i18n("Plaintext — not encrypted!");
-        if (k === "directory")
-            return i18n("Directory");
-        return k;
+        const t = s.encType === "age" ? "age" : s.encType === "pgp" ? "PGP" : s.encType === "mixed" ? "age + PGP" : "";
+        if (s.encKind === "encrypted")
+            return "SOPS" + (t ? " · " + t : "");
+        if (s.encKind === "plain")
+            return qsTr("Plain text");
+        if (s.encKind === "directory")
+            return qsTr("Directory");
+        return s.encKind || "—";
     }
 
-    ColumnLayout {
+    ScrollView {
+        id: scroll
         anchors.fill: parent
-        spacing: 0
+        clip: true
+        contentWidth: availableWidth
+        ColumnLayout {
+            width: scroll.availableWidth
+            spacing: 9
 
-        // ── Section header ────────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-            Layout.bottomMargin: 8
-
-            Kirigami.Icon {
-                source: secretsTab.svg("ic_secrets")
-                isMask: true
-                implicitWidth: 20
-                implicitHeight: 20
-                color: secretsTab.deployedSecrets.exists || secretsTab.sourceSecrets.exists ? "#55cc55" : "#ff5555"
-            }
-
-            Text {
-                text: i18n("SOPS / Agenix Secrets")
-                color: secretsTab.textColor
-                font.pixelSize: secretsTab.fpx(12)
-                font.bold: true
+            // ── Deployed ──────────────────────────────────────────────
+            SectionIntro {
                 Layout.fillWidth: true
+                Layout.bottomMargin: 8
+                title: qsTr("Deployed secrets")
+                subtitle: secretsTab.deployed.path || qsTr("Nothing found at /run/secrets or /run/agenix.d.")
+                textColor: secretsTab.textColor
+                fs: secretsTab.fs
+                Tag {
+                    text: secretsTab.deployed.exists ? secretsTab.countLabel(secretsTab.deployed.fileCount) : qsTr("Missing")
+                    tone: secretsTab.deployed.exists ? UI.Theme.positive : UI.Theme.negative
+                    fs: secretsTab.fs
+                }
             }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            height: 1
-            color: Qt.rgba(1, 1, 1, 0.08)
-            Layout.bottomMargin: 8
-        }
-
-        // scrollable body
-        Flickable {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            contentWidth: width
-            contentHeight: secretsBody.implicitHeight
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
+            InfoRows {
+                Layout.fillWidth: true
+                visible: secretsTab.deployed.exists
+                textColor: secretsTab.textColor
+                fs: secretsTab.fs
+                rows: [
+                    {
+                        label: qsTr("Last modified"),
+                        value: secretsTab.deployed.lastModified || "—"
+                    },
+                    {
+                        label: qsTr("Freshness"),
+                        value: secretsTab.deployed.freshness === "fresh" ? qsTr("Deployed with the running system") : qsTr("Older than the running system"),
+                        tone: secretsTab.deployed.freshness === "fresh" ? UI.Theme.positive : UI.Theme.changed
+                    }
+                ]
+            }
+            Repeater {
+                model: secretsTab.deployed.exists ? secretsTab.deployed.names : []
+                ToolRow {
+                    required property string modelData
+                    Layout.fillWidth: true
+                    glyph: "ic_secrets"
+                    iconColor: UI.Theme.positive
+                    title: modelData
+                    detail: secretsTab.deployed.path.endsWith("/" + modelData) ? secretsTab.deployed.path : secretsTab.deployed.path + "/" + modelData
+                    textColor: secretsTab.textColor
+                    fs: secretsTab.fs
+                }
             }
 
-            ColumnLayout {
-                id: secretsBody
-                width: parent.width
-                spacing: 0
-
-                // ── DEPLOYED block ────────────────────────────────
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
-                    Layout.bottomMargin: 10
-
-                    // Sub-header
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-                        Layout.bottomMargin: 2
-
-                        Text {
-                            text: i18n("Deployed")
-                            color: secretsTab.textColor
-                            font.pixelSize: secretsTab.fpx(10)
-                            font.bold: true
-                            opacity: 0.7
-                            Layout.fillWidth: true
-                        }
-
-                        Rectangle {
-                            radius: 3
-                            color: secretsTab.deployedSecrets.exists ? Qt.rgba(0.2, 0.8, 0.3, 0.15) : Qt.rgba(1, 0.2, 0.2, 0.15)
-                            border.color: secretsTab.deployedSecrets.exists ? "#55cc55" : "#ff5555"
-                            border.width: 1
-                            width: deployedPill.implicitWidth + 12
-                            height: 17
-                            Text {
-                                id: deployedPill
-                                anchors.centerIn: parent
-                                text: secretsTab.deployedSecrets.exists ? i18n("OK") : i18n("Missing")
-                                color: secretsTab.deployedSecrets.exists ? "#55cc55" : "#ff5555"
-                                font.pixelSize: secretsTab.fpx(8)
-                                font.bold: true
-                            }
-                        }
-                    }
-
-                    // rows
-                    Repeater {
-                        model: {
-                            const d = secretsTab.deployedSecrets;
-                            const rows = [];
-                            rows.push({
-                                label: i18n("Path:"),
-                                value: d.path || i18n("Auto-detecting…"),
-                                dim: !d.path
-                            });
-                            if (d.exists) {
-                                rows.push({
-                                    label: i18n("Last modified:"),
-                                    value: d.lastModified || "—",
-                                    dim: false
-                                });
-                                rows.push({
-                                    label: i18n("Freshness:"),
-                                    value: d.freshness || "—",
-                                    dim: false,
-                                    fresh: d.freshness
-                                });
-                                rows.push({
-                                    label: i18n("Secrets:"),
-                                    value: d.fileCount + (d.fileCount === 1 ? " " + i18n("file") : " " + i18n("files")),
-                                    dim: false
-                                });
-                            }
-                            return rows;
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-                            Text {
-                                text: modelData.label
-                                color: secretsTab.textColor
-                                opacity: 0.42
-                                font.pixelSize: secretsTab.fpx(9)
-                                Layout.minimumWidth: 100
-                            }
-                            Text {
-                                text: modelData.value
-                                color: modelData.fresh === "fresh" ? "#55cc55" : modelData.fresh === "stale" ? "#ffaa44" : secretsTab.textColor
-                                font.pixelSize: secretsTab.fpx(9)
-                                opacity: modelData.dim ? 0.38 : 0.85
-                                elide: Text.ElideMiddle
-                                Layout.fillWidth: true
-                            }
-                        }
-                    }
-
-                    // Secret name chips (if any are listed)
-                    Flow {
-                        visible: secretsTab.deployedSecrets.exists && secretsTab.deployedSecrets.names.length > 0
-                        Layout.fillWidth: true
-                        spacing: 4
-                        Layout.topMargin: 2
-
-                        Repeater {
-                            model: secretsTab.deployedSecrets.names
-                            Rectangle {
-                                radius: 3
-                                color: Qt.rgba(1, 1, 1, 0.06)
-                                border.color: Qt.rgba(1, 1, 1, 0.12)
-                                border.width: 1
-                                width: chipTxt.implicitWidth + 10
-                                height: chipTxt.implicitHeight + 5
-                                Text {
-                                    id: chipTxt
-                                    anchors.centerIn: parent
-                                    text: modelData
-                                    color: secretsTab.textColor
-                                    opacity: 0.7
-                                    font.pixelSize: secretsTab.fpx(8)
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                }
-                            }
-                        }
-                    }
+            // ── Encrypted source ──────────────────────────────────────
+            SectionIntro {
+                Layout.fillWidth: true
+                Layout.topMargin: 16
+                Layout.bottomMargin: 8
+                visible: secretsTab.source.path !== ""
+                title: qsTr("Encrypted source")
+                subtitle: secretsTab.source.path
+                textColor: secretsTab.textColor
+                fs: secretsTab.fs
+                Tag {
+                    text: !secretsTab.source.exists ? qsTr("Missing") : secretsTab.sourcePlaintext ? qsTr("Not encrypted") : secretsTab.countLabel(secretsTab.source.names.length)
+                    tone: secretsTab.source.exists && !secretsTab.sourcePlaintext ? UI.Theme.positive : UI.Theme.negative
+                    fs: secretsTab.fs
                 }
-
-                // ── Divider ───────────────────────────────────────
-                Rectangle {
-                    Layout.fillWidth: true
-                    height: 1
-                    color: Qt.rgba(1, 1, 1, 0.06)
-                    Layout.bottomMargin: 10
-                    visible: secretsTab.sourceSecrets.path !== ""
+            }
+            Notice {
+                Layout.fillWidth: true
+                visible: secretsTab.sourcePlaintext
+                glyph: "ic_warning"
+                tone: UI.Theme.negative
+                emphasis: true
+                fs: secretsTab.fs
+                text: qsTr("This file is not encrypted. Anyone who can read your flake can read these values.")
+            }
+            InfoRows {
+                Layout.fillWidth: true
+                visible: secretsTab.source.exists
+                textColor: secretsTab.textColor
+                fs: secretsTab.fs
+                rows: {
+                    const s = secretsTab.source;
+                    const rows = [
+                        {
+                            label: qsTr("Last modified"),
+                            value: s.lastModified || "—"
+                        },
+                        {
+                            label: qsTr("Format"),
+                            value: secretsTab.encLabel(s),
+                            tone: s.encKind === "plain" ? UI.Theme.negative : undefined
+                        }
+                    ];
+                    if (s.sopsVersion)
+                        rows.push({
+                            label: qsTr("SOPS version"),
+                            value: s.sopsVersion
+                        });
+                    if (s.recipientCount > 0)
+                        rows.push({
+                            label: qsTr("Recipients"),
+                            value: String(s.recipientCount)
+                        });
+                    return rows;
                 }
-
-                // ── SOURCE block ──────────────────────────────────
-                ColumnLayout {
+            }
+            Repeater {
+                model: secretsTab.source.exists ? secretsTab.source.names : []
+                ToolRow {
+                    required property string modelData
                     Layout.fillWidth: true
-                    spacing: 4
-                    visible: secretsTab.sourceSecrets.path !== ""
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-                        Layout.bottomMargin: 2
-
-                        Text {
-                            text: i18n("Source (encrypted)")
-                            color: secretsTab.textColor
-                            font.pixelSize: secretsTab.fpx(10)
-                            font.bold: true
-                            opacity: 0.7
-                            Layout.fillWidth: true
-                        }
-
-                        Rectangle {
-                            radius: 3
-                            color: secretsTab.sourceSecrets.exists ? Qt.rgba(0.2, 0.8, 0.3, 0.15) : Qt.rgba(1, 0.2, 0.2, 0.15)
-                            border.color: secretsTab.sourceSecrets.exists ? "#55cc55" : "#ff5555"
-                            border.width: 1
-                            width: sourcePill.implicitWidth + 12
-                            height: 17
-                            Text {
-                                id: sourcePill
-                                anchors.centerIn: parent
-                                text: secretsTab.sourceSecrets.exists ? i18n("OK") : i18n("Missing")
-                                color: secretsTab.sourceSecrets.exists ? "#55cc55" : "#ff5555"
-                                font.pixelSize: secretsTab.fpx(8)
-                                font.bold: true
-                            }
-                        }
-                    }
-
-                    Repeater {
-                        model: {
-                            const s = secretsTab.sourceSecrets;
-                            const rows = [];
-                            rows.push({
-                                label: i18n("Path:"),
-                                value: s.path || i18n("Not configured"),
-                                dim: !s.path,
-                                warn: false
-                            });
-                            if (s.exists) {
-                                rows.push({
-                                    label: i18n("Last modified:"),
-                                    value: s.lastModified || "—",
-                                    dim: false,
-                                    warn: false
-                                });
-                                const enc = secretsTab.encLabel(s);
-                                rows.push({
-                                    label: i18n("Format:"),
-                                    value: enc || "—",
-                                    dim: false,
-                                    warn: s.encKind === "plain"
-                                });
-                                if (s.sopsVersion)
-                                    rows.push({
-                                        label: i18n("SOPS:"),
-                                        value: "v" + s.sopsVersion,
-                                        dim: false,
-                                        warn: false
-                                    });
-                                if (s.recipientCount > 0)
-                                    rows.push({
-                                        label: i18n("Recipients:"),
-                                        value: s.recipientCount + (s.encType ? " (" + s.encType + ")" : ""),
-                                        dim: false,
-                                        warn: false
-                                    });
-                            }
-                            return rows;
-                        }
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 6
-                            Text {
-                                text: modelData.label
-                                color: secretsTab.textColor
-                                opacity: 0.42
-                                font.pixelSize: secretsTab.fpx(9)
-                                Layout.minimumWidth: 100
-                            }
-                            Text {
-                                text: modelData.value
-                                color: modelData.warn ? "#ffaa44" : secretsTab.textColor
-                                font.pixelSize: secretsTab.fpx(9)
-                                opacity: modelData.dim ? 0.38 : 0.85
-                                elide: Text.ElideMiddle
-                                Layout.fillWidth: true
-                            }
-                        }
-                    }
-
-                    // Secret name chips
-                    Flow {
-                        visible: secretsTab.sourceSecrets.exists && secretsTab.sourceSecrets.names.length > 0
-                        Layout.fillWidth: true
-                        spacing: 4
-                        Layout.topMargin: 2
-
-                        Repeater {
-                            model: secretsTab.sourceSecrets.names
-                            Rectangle {
-                                radius: 3
-                                color: Qt.rgba(1, 1, 1, 0.06)
-                                border.color: Qt.rgba(1, 1, 1, 0.12)
-                                border.width: 1
-                                width: srcChip.implicitWidth + 10
-                                height: srcChip.implicitHeight + 5
-                                Text {
-                                    id: srcChip
-                                    anchors.centerIn: parent
-                                    text: modelData
-                                    color: secretsTab.textColor
-                                    opacity: 0.7
-                                    font.pixelSize: secretsTab.fpx(8)
-                                    font.family: Kirigami.Theme.fixedWidthFont.family
-                                }
-                            }
-                        }
-                    }
+                    glyph: "ic_secrets"
+                    iconColor: secretsTab.sourcePlaintext ? UI.Theme.negative : "#93a5be"
+                    title: modelData
+                    detail: secretsTab.source.path.split("/").pop()
+                    textColor: secretsTab.textColor
+                    fs: secretsTab.fs
                 }
-
-                // ── Nothing configured ────────────────────────────
-                Text {
-                    visible: secretsTab.nothingConfigured
-                    text: i18n("No secrets found.\nDeployed secrets are auto-detected at /run/secrets or /run/agenix.d.\nSet a source file path in Settings → Behavior.")
-                    color: secretsTab.textColor
-                    opacity: 0.38
-                    font.pixelSize: secretsTab.fpx(9)
-                    wrapMode: Text.WordWrap
-                    width: parent.width
-                    horizontalAlignment: Text.AlignHCenter
-                    Layout.fillWidth: true
-                }
+            }
+            Notice {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                visible: secretsTab.source.path === ""
+                fs: secretsTab.fs
+                text: qsTr("No encrypted source file found in your flake. Set one in Settings → Behavior → Secrets.")
+            }
+            Notice {
+                Layout.fillWidth: true
+                Layout.topMargin: 6
+                fs: secretsTab.fs
+                text: qsTr("Only names, paths, and metadata are shown. Secret values are never decrypted or displayed.")
             }
         }
     }

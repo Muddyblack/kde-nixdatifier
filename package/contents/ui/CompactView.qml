@@ -1,20 +1,10 @@
 import QtQuick
 import QtQuick.Layouts
 import QtQuick.Controls
-import org.kde.kirigami as Kirigami
+import "shared" as UI
 
 Item {
-    id: compactRoot
-
-    implicitWidth: Kirigami.Units.gridUnit * 2.2
-    implicitHeight: Kirigami.Units.gridUnit * 2.2
-
-    Layout.minimumWidth: implicitWidth
-    Layout.preferredWidth: implicitWidth
-    Layout.minimumHeight: implicitHeight
-    Layout.preferredHeight: implicitHeight
-
-    // ── Required properties from root ────────────────────────────────────────
+    id: root
     required property color accentColor
     required property color textColor
     required property int activeGenNum
@@ -22,154 +12,81 @@ Item {
     required property bool isBusy
     required property bool isLoadingGens
     property bool isSpinning: isBusy || isLoadingGens
+    property bool enableMotion: true
     required property string compactStyle
     required property bool compactShowBadge
     required property string iconStyle
-
-    readonly property bool logoIsMask: iconStyle !== "colored"
-    readonly property bool logoUseImage: iconStyle === "colored"
-    readonly property color logoColor: {
-        if (iconStyle === "white") {
-            return "#ffffff";
-        }
-        if (iconStyle === "black") {
-            return "#000000";
-        }
-        return compactRoot.accentColor;
-    }
-
+    readonly property bool pill: compactStyle === "pill"
+    implicitWidth: pill ? 100 : 36
+    implicitHeight: 36
+    Layout.minimumWidth: implicitWidth
+    Layout.preferredWidth: implicitWidth
+    Layout.minimumHeight: 24
     signal toggleExpanded
-
+    Rectangle {
+        anchors.fill: parent
+        radius: root.pill ? height / 2 : 6
+        color: mouse.containsMouse ? "#20ffffff" : root.pill ? "#10ffffff" : "transparent"
+    }
+    RowLayout {
+        anchors.centerIn: parent
+        spacing: 6
+        visible: root.pill
+        UI.Flake {
+            implicitWidth: 24
+            implicitHeight: 24
+            working: root.isSpinning
+            motion: root.enableMotion
+            style: root.iconStyle
+            accent: root.accentColor
+        }
+        Text {
+            text: root.activeGenNum > 0 ? "#" + root.activeGenNum : "—"
+            color: root.textColor
+            font.pixelSize: 12
+        }
+    }
+    UI.Flake {
+        visible: !root.pill && (root.compactStyle !== "number" || root.isSpinning)
+        anchors.centerIn: parent
+        anchors.verticalCenterOffset: root.compactStyle === "both" ? -4 : 0
+        implicitWidth: root.compactStyle === "both" ? Math.min(24, root.height - 14) : Math.min(root.width, root.height) - 6
+        implicitHeight: implicitWidth
+        working: root.isSpinning
+        motion: root.enableMotion
+        style: root.iconStyle
+        accent: root.accentColor
+    }
+    Text {
+        visible: !root.pill && (root.compactStyle === "both" || root.compactStyle === "number" && !root.isSpinning)
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: root.compactStyle === "both" ? parent.height - height : (parent.height - height) / 2
+        text: root.activeGenNum > 0 ? root.activeGenNum : "—"
+        color: root.textColor
+        font.pixelSize: root.compactStyle === "both" ? 10 : 13
+    }
+    Rectangle {
+        visible: root.compactShowBadge && root.flakeUpdates.length > 0
+        anchors.top: parent.top
+        anchors.right: parent.right
+        implicitWidth: Math.max(14, badge.implicitWidth + 6)
+        implicitHeight: 14
+        radius: 7
+        color: root.accentColor
+        Text {
+            id: badge
+            anchors.centerIn: parent
+            text: root.flakeUpdates.length
+            color: "#131923"
+            font.pixelSize: 9
+            font.bold: true
+        }
+    }
     MouseArea {
-        id: compactMouse
+        id: mouse
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        acceptedButtons: Qt.LeftButton
-        z: 10
-        onClicked: compactRoot.toggleExpanded()
-    }
-
-    Rectangle {
-        anchors.fill: parent
-        anchors.margins: 2
-        radius: 5
-        color: compactMouse.containsMouse ? Qt.rgba(1, 1, 1, 0.12) : "transparent"
-        Behavior on color {
-            ColorAnimation {
-                duration: 120
-            }
-        }
-    }
-
-    Kirigami.Icon {
-        id: compactIconImage
-        visible: !compactRoot.isSpinning && compactRoot.compactStyle !== "number" && compactRoot.logoUseImage
-        source: Qt.resolvedUrl("nixos-logo.svg")
-        isMask: false
-        anchors.centerIn: parent
-        implicitWidth: compactRoot.compactStyle === "both" ? parent.width * 0.55 : parent.width - 10
-        implicitHeight: implicitWidth
-        anchors.verticalCenterOffset: compactRoot.compactStyle === "both" ? -4 : 0
-    }
-
-    Kirigami.Icon {
-        id: compactIcon
-        visible: !compactRoot.isSpinning && compactRoot.compactStyle !== "number" && !compactRoot.logoUseImage
-        source: Qt.resolvedUrl("nixos-logo.svg")
-        isMask: true
-        color: compactRoot.logoColor
-        anchors.centerIn: parent
-        implicitWidth: compactRoot.compactStyle === "both" ? parent.width * 0.55 : parent.width - 10
-        implicitHeight: implicitWidth
-        anchors.verticalCenterOffset: compactRoot.compactStyle === "both" ? -4 : 0
-        Behavior on color {
-            ColorAnimation {
-                duration: 300
-            }
-        }
-    }
-
-    Text {
-        visible: compactRoot.compactStyle !== "icon" && compactRoot.activeGenNum > 0 && (compactRoot.compactStyle !== "number" || !compactRoot.isSpinning)
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: compactRoot.compactStyle === "both" ? 3 : 0
-        anchors.verticalCenter: compactRoot.compactStyle === "number" ? parent.verticalCenter : undefined
-        text: compactRoot.activeGenNum > 0 ? compactRoot.activeGenNum : "—"
-        color: compactRoot.textColor
-        font.pixelSize: compactRoot.compactStyle === "both" ? Math.round(Kirigami.Theme.smallFont.pixelSize * 0.85) : Math.round(Kirigami.Theme.smallFont.pixelSize * 1.15)
-        font.bold: true
-    }
-
-    Rectangle {
-        visible: compactRoot.compactShowBadge && compactRoot.flakeUpdates.length > 0
-        anchors.top: parent.top
-        anchors.right: parent.right
-        anchors.topMargin: 3
-        anchors.rightMargin: 3
-        width: 14
-        height: 14
-        radius: 7
-        color: "#cc88ff"
-        border.color: Kirigami.Theme.backgroundColor
-        border.width: 1.5
-
-        Text {
-            anchors.centerIn: parent
-            text: compactRoot.flakeUpdates.length
-            color: "#ffffff"
-            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.85)
-            font.bold: true
-        }
-
-        ToolTip.text: compactRoot.flakeUpdates.length === 1 ? "1 flake input update available" : compactRoot.flakeUpdates.length + " flake input updates available"
-        ToolTip.visible: badgeMa.containsMouse
-        ToolTip.delay: 300
-
-        MouseArea {
-            id: badgeMa
-            anchors.fill: parent
-            hoverEnabled: true
-            propagateComposedEvents: true
-            onClicked: mouse => mouse.accepted = false
-        }
-    }
-
-    Kirigami.Icon {
-        id: compactSpinnerImage
-        anchors.centerIn: parent
-        visible: compactRoot.isSpinning && compactRoot.logoUseImage
-        source: Qt.resolvedUrl("nixos-logo.svg")
-        isMask: false
-        implicitWidth: compactRoot.compactStyle === "both" ? parent.width * 0.55 : parent.width - 10
-        implicitHeight: implicitWidth
-        anchors.verticalCenterOffset: compactRoot.compactStyle === "both" ? -4 : 0
-        RotationAnimation on rotation {
-            running: compactSpinnerImage.visible
-            from: 0
-            to: 360
-            duration: 1400
-            loops: Animation.Infinite
-        }
-    }
-
-    Kirigami.Icon {
-        id: compactSpinner
-        anchors.centerIn: parent
-        visible: compactRoot.isSpinning && !compactRoot.logoUseImage
-        source: Qt.resolvedUrl("nixos-logo.svg")
-        isMask: true
-        color: compactRoot.logoColor
-        implicitWidth: compactRoot.compactStyle === "both" ? parent.width * 0.55 : parent.width - 10
-        implicitHeight: implicitWidth
-        anchors.verticalCenterOffset: compactRoot.compactStyle === "both" ? -4 : 0
-        RotationAnimation on rotation {
-            running: compactSpinner.visible
-            from: 0
-            to: 360
-            duration: 1400
-            loops: Animation.Infinite
-        }
+        onClicked: root.toggleExpanded()
     }
 }

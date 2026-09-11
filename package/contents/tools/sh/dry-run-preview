@@ -18,16 +18,22 @@ set -u
 FLAKE_DIR="${1:-}"
 INPUT_NAME="${2:-}"
 OVERRIDE_REF="${3:-}"
-HOSTNAME="${4:-$(hostname -s 2>/dev/null || cat /proc/sys/kernel/hostname)}"
+preview_host="${4:-auto}"
 
-[ -z "$FLAKE_DIR" ] || [ -z "$INPUT_NAME" ] || [ -z "$OVERRIDE_REF" ] && {
+if [ -z "$FLAKE_DIR" ] || [ -z "$INPUT_NAME" ] || [ -z "$OVERRIDE_REF" ]; then
     echo "ERROR: usage: dry-run-preview <flake-dir> <input-name> <override-ref> [hostname]"
     exit 1
-}
+fi
 
 export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
 
 command -v nix >/dev/null 2>&1 || { echo "ERROR: nix not on PATH"; exit 1; }
+
+if [[ "$preview_host" == auto ]]; then
+    preview_host=$(hostname -s 2>/dev/null || cat /proc/sys/kernel/hostname)
+elif [[ "$preview_host" == single ]]; then
+    preview_host=$(nix eval --json --no-write-lock-file "$FLAKE_DIR#nixosConfigurations" --apply builtins.attrNames | jq -er 'if length == 1 then .[0] else error("Host detection disabled: flake must have one NixOS configuration") end') || exit 1
+fi
 
 # ── Build a name→version map of the currently running system's packages ───────
 declare -A CURRENT_VER
@@ -46,9 +52,9 @@ while IFS= read -r storepath; do
 done < <(nix-store -q --requisites /run/current-system 2>/dev/null | grep -v '\.drv$' | sort -u)
 
 # ── Run the evaluation dry-run ────────────────────────────────────────────────
-TARGET="${FLAKE_DIR}#nixosConfigurations.${HOSTNAME}.config.system.build.toplevel"
+TARGET="${FLAKE_DIR}#nixosConfigurations.${preview_host}.config.system.build.toplevel"
 
-DRY_OUT=$(nix build --dry-run "$TARGET" \
+DRY_OUT=$(nix build --dry-run --no-write-lock-file "$TARGET" \
     --override-input "$INPUT_NAME" "$OVERRIDE_REF" \
     2>&1 1>/dev/null)
 
