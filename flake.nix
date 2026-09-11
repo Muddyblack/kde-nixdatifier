@@ -7,7 +7,7 @@
     let
       systems = [ "x86_64-linux" "aarch64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
-      pkgsFor = system: import nixpkgs { inherit system; };
+      pkgsFor = system: nixpkgs.legacyPackages.${system};
 
       metadata = builtins.fromJSON (builtins.readFile ./package/metadata.json);
       pluginId = metadata.KPlugin.Id;   # org.muddyblack.nixosGenerationExplorer
@@ -64,7 +64,8 @@
           view = {
             type = "app";
             program = toString (pkgs.writeShellScript "view" ''
-              exec nix shell nixpkgs#kdePackages.plasma-sdk -c plasmoidviewer \
+              export PATH=${pkgs.lib.makeBinPath [ pkgs.kdePackages.plasma-sdk ]}:"$PATH"
+              exec plasmoidviewer \
                 -a "$PWD/package" -f "''${1:-planar}"
             '');
           };
