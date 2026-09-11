@@ -1015,14 +1015,11 @@ Pane {
                     sourceSecrets: fullView.sourceSecrets
                 }
                 HashTab {
-                    enableMotion: fullView.enableMotion
                     anchors.fill: parent
-                    uiActive: fullView.uiActive && visible
                     activeViewMode: fullView.activeViewMode
                     accentColor: fullView.accentColor
                     textColor: fullView.textColor
                     fs: fullView.fs
-                    iconStyle: fullView.iconStyle
                     hashResult: fullView.hashResult
                     isProbingHash: fullView.isProbingHash
 

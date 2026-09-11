@@ -1,28 +1,85 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
+import QtQuick.Layouts
 import "shared" as UI
+import "components"
 
 Item {
     id: hashTab
 
-    // ── Required properties ───────────────────────────────────────────────────
-    // See FullView.uiActive — false while the popup is closed.
-    property bool enableMotion: true
-    property bool uiActive: true
     required property color accentColor
     required property color textColor
     required property real fs
-    required property string iconStyle
     required property var hashResult
     required property string activeViewMode
     property bool isProbingHash: false
-    property string mode: "url"
-    // SRI form (sha256-…) of the current result, as converted by Nix.
-    property string sri: ""
 
-    function fpx(n) {
-        return UI.Theme.fontPx(n, fs);
+    property string mode: "url"
+    // Result of the last run: the hash as the tool reports it, its SRI form
+    // (sha256-…) as converted by Nix, and the input it was computed for.
+    property string value: ""
+    property string sri: ""
+    property bool isError: false
+    property string lastInput: ""
+
+    readonly property var modes: [
+        {
+            id: "url",
+            label: qsTr("URL"),
+            tip: qsTr("Hash of a remote file, for fetchurl"),
+            field: qsTr("File URL"),
+            placeholder: "https://example.com/source.tar.gz"
+        },
+        {
+            id: "zip",
+            label: qsTr("Archive"),
+            tip: qsTr("Hash of an unpacked archive, for fetchzip"),
+            field: qsTr("Archive URL"),
+            placeholder: "https://example.com/archive.zip"
+        },
+        {
+            id: "github",
+            label: qsTr("GitHub"),
+            tip: qsTr("Hash of a repository revision, for fetchFromGitHub"),
+            field: qsTr("Repository and revision"),
+            placeholder: "owner/repo/v1.2.3"
+        },
+        {
+            id: "file",
+            label: qsTr("File"),
+            tip: qsTr("sha256 of a local file"),
+            field: qsTr("Local file"),
+            placeholder: "/path/to/file"
+        },
+        {
+            id: "store",
+            label: qsTr("Store path"),
+            tip: qsTr("NAR hash of a /nix/store path"),
+            field: qsTr("Store path"),
+            placeholder: "/nix/store/…-package"
+        }
+    ]
+    readonly property var currentMode: modes.find(m => m.id === mode) || modes[0]
+
+    readonly property string snippet: {
+        if (value === "" || isError)
+            return "";
+        // Current nixpkgs prefers `hash = "sha256-…"`; keep the legacy
+        // attribute only when Nix could not convert.
+        const attr = sri ? '  hash = "' + sri + '";' : '  sha256 = "' + value + '";';
+        switch (mode) {
+        case "url":
+            return 'fetchurl {\n  url = "' + lastInput + '";\n' + attr + '\n}';
+        case "zip":
+            return 'fetchzip {\n  url = "' + lastInput + '";\n' + attr + '\n}';
+        case "github":
+            {
+                const parts = lastInput.split("/");
+                return 'fetchFromGitHub {\n  owner = "' + (parts[0] || "") + '";\n  repo = "' + (parts[1] || "") + '";\n  rev = "' + parts.slice(2).join("/") + '";\n' + attr + '\n}';
+            }
+        default:
+            return "";
+        }
     }
 
     signal hashRequested(string mode, string input)
@@ -31,395 +88,156 @@ Item {
     anchors.fill: parent
     visible: activeViewMode === "hash"
 
-    ColumnLayout {
+    function clearResult() {
+        value = "";
+        sri = "";
+        isError = false;
+    }
+    function run() {
+        const input = inputField.text.trim();
+        if (input === "" || isProbingHash)
+            return;
+        clearResult();
+        lastInput = input;
+        hashRequested(mode, input);
+    }
+    onHashResultChanged: {
+        const r = hashResult;
+        if (r === null)
+            return;
+        isError = r.isError;
+        value = r.isError ? String(r.value).replace(/^ERROR:\s*/, "") : r.value;
+        sri = r.sri || "";
+    }
+
+    ScrollView {
+        id: scroll
         anchors.fill: parent
-        spacing: 10
+        clip: true
+        contentWidth: availableWidth
+        ColumnLayout {
+            width: scroll.availableWidth
+            spacing: 0
 
-        // ── Mode selector ─────────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 4
-
-            Repeater {
-                model: [
-                    {
-                        id: "url",
-                        label: qsTr("URL"),
-                        tip: qsTr("sha256 of a remote file (fetchurl)")
-                    },
-                    {
-                        id: "zip",
-                        label: qsTr("Zip/Tar"),
-                        tip: qsTr("sha256 of an unpacked archive (fetchzip)")
-                    },
-                    {
-                        id: "github",
-                        label: qsTr("GitHub"),
-                        tip: qsTr("owner/repo/rev → sha256 (fetchFromGitHub)")
-                    },
-                    {
-                        id: "file",
-                        label: qsTr("File"),
-                        tip: qsTr("sha256sum of a local file")
-                    },
-                    {
-                        id: "store",
-                        label: qsTr("Store"),
-                        tip: qsTr("NAR hash of a /nix/store/... path")
-                    }
-                ]
-
-                Rectangle {
-                    readonly property bool active: hashTab.mode === modelData.id
-                    radius: 4
-                    height: 24
-                    width: modeLbl.implicitWidth + 14
-                    color: active ? Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.22) : (modeMa.containsMouse ? Qt.rgba(1, 1, 1, 0.07) : Qt.rgba(1, 1, 1, 0.03))
-                    border.color: active ? Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.5) : Qt.rgba(1, 1, 1, 0.10)
-                    border.width: 1
-                    Behavior on color {
-                        ColorAnimation {
-                            duration: 110
-                        }
-                    }
-
-                    Text {
-                        id: modeLbl
-                        anchors.centerIn: parent
+            Text {
+                Layout.fillWidth: true
+                Layout.bottomMargin: 14
+                text: qsTr("Calculate a Nix hash for a source, ready to paste into a fetcher.")
+                color: "#9bacc4"
+                font.pixelSize: UI.Theme.fontPx(11, hashTab.fs)
+                wrapMode: Text.Wrap
+                lineHeight: 1.5
+            }
+            Flow {
+                Layout.fillWidth: true
+                Layout.bottomMargin: 16
+                spacing: 5
+                Repeater {
+                    model: hashTab.modes
+                    UI.ActionButton {
+                        required property var modelData
+                        objectName: "hashMode-" + modelData.id
                         text: modelData.label
-                        color: active ? hashTab.accentColor : Qt.rgba(hashTab.textColor.r, hashTab.textColor.g, hashTab.textColor.b, 0.65)
-                        font.pixelSize: hashTab.fpx(9)
-                        font.bold: active
-                    }
-
-                    ToolTip.text: modelData.tip
-                    ToolTip.visible: modeMa.containsMouse
-                    ToolTip.delay: 500
-
-                    MouseArea {
-                        id: modeMa
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
+                        tip: modelData.tip
+                        accent: hashTab.accentColor
+                        primary: hashTab.mode === modelData.id
+                        flatStyle: hashTab.mode !== modelData.id
+                        implicitHeight: 25 * hashTab.fs
+                        font.pixelSize: UI.Theme.fontPx(9, hashTab.fs)
                         onClicked: {
+                            if (hashTab.mode === modelData.id)
+                                return;
                             hashTab.mode = modelData.id;
-                            hashInputField.text = "";
+                            inputField.text = "";
                             hashTab.clearResult();
                         }
                     }
                 }
             }
-
-            Item {
-                Layout.fillWidth: true
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: 1
-            color: Qt.rgba(1, 1, 1, 0.08)
-        }
-
-        // ── Placeholder hint ──────────────────────────────────────
-        Text {
-            Layout.fillWidth: true
-            text: {
-                switch (hashTab.mode) {
-                case "url":
-                    return qsTr("https://example.com/file.tar.gz");
-                case "zip":
-                    return qsTr("https://example.com/archive.zip");
-                case "github":
-                    return qsTr("owner/repo/v1.2.3   or   owner/repo/abc1234");
-                case "file":
-                    return qsTr("/path/to/local/file");
-                case "store":
-                    return qsTr("/nix/store/abc123...-some-package");
-                default:
-                    return "";
-                }
-            }
-            color: hashTab.textColor
-            opacity: 0.35
-            font.pixelSize: hashTab.fpx(8)
-            font.italic: true
-            wrapMode: Text.Wrap
-        }
-
-        // ── Input field ───────────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-
-            TextField {
-                id: hashInputField
-                Layout.fillWidth: true
-                implicitHeight: 28
-                font.pixelSize: hashTab.fpx(9)
-                font.family: UI.Theme.fixedWidthFont.family
-                placeholderText: qsTr("Enter input…")
-                leftPadding: 8
-                rightPadding: 8
-                color: hashTab.textColor
-                onAccepted: hashRunButton.clicked()
-                background: Rectangle {
-                    radius: 4
-                    color: Qt.rgba(1, 1, 1, 0.06)
-                    border.color: hashInputField.activeFocus ? Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.6) : Qt.rgba(1, 1, 1, 0.15)
-                    border.width: 1
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 120
-                        }
-                    }
-                }
-            }
-
-            Button {
-                id: hashRunButton
-                text: hashSpinner.visible ? "" : qsTr("Get Hash")
-                implicitHeight: 28
-                enabled: hashInputField.text.trim() !== "" && !hashTab.isProbingHash
-                font.pixelSize: hashTab.fpx(9)
-                font.bold: true
-
-                onClicked: {
-                    hashTab.clearResult();
-                    hashTab.hashRequested(hashTab.mode, hashInputField.text.trim());
-                }
-
-                background: Rectangle {
-                    radius: 4
-                    color: parent.enabled ? (parent.hovered ? Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.30) : Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.16)) : Qt.rgba(1, 1, 1, 0.04)
-                    border.color: parent.enabled ? hashTab.accentColor : Qt.rgba(1, 1, 1, 0.1)
-                    border.width: 1
-                }
-                contentItem: RowLayout {
-                    anchors.centerIn: parent
-                    spacing: 6
-                    UI.Flake {
-                        id: hashSpinner
-                        visible: hashTab.isProbingHash
-                        implicitWidth: 14
-                        implicitHeight: 14
-                        working: visible && hashTab.uiActive
-                        motion: hashTab.enableMotion
-                        style: hashTab.iconStyle
-                        accent: hashTab.accentColor
-                    }
-                    Text {
-                        visible: !hashSpinner.visible
-                        text: hashRunButton.text
-                        color: hashRunButton.enabled ? hashTab.textColor : Qt.rgba(hashTab.textColor.r, hashTab.textColor.g, hashTab.textColor.b, 0.4)
-                        font: hashRunButton.font
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-                }
-            }
-        }
-
-        // ── Result field ──────────────────────────────────────────
-        Rectangle {
-            Layout.fillWidth: true
-            implicitHeight: hashResultField.text !== "" ? hashResultRow.implicitHeight + 16 : 0
-            clip: true
-            radius: 5
-            color: hashResultField.isError ? Qt.rgba(1, 0.2, 0.2, 0.12) : Qt.rgba(0.2, 0.85, 0.2, 0.09)
-            border.color: hashResultField.isError ? "#ff5555" : "#55cc55"
-            border.width: 1
-            Behavior on implicitHeight {
-                NumberAnimation {
-                    duration: 180
-                }
-            }
-            visible: height > 0
-
-            RowLayout {
-                id: hashResultRow
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    verticalCenter: parent.verticalCenter
-                }
-                anchors.leftMargin: 10
-                anchors.rightMargin: 6
-                spacing: 6
-
-                TextEdit {
-                    id: hashResultField
-                    property bool isError: false
-                    Layout.fillWidth: true
-                    readOnly: true
-                    wrapMode: Text.WrapAnywhere
-                    font.pixelSize: hashTab.fpx(9)
-                    font.family: UI.Theme.fixedWidthFont.family
-                    color: isError ? "#ff7777" : "#88ff88"
-                    selectByMouse: true
-                    // Make selection visible
-                    selectionColor: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.35)
-                }
-
-                ToolButton {
-                    visible: !hashResultField.isError && hashResultField.text !== ""
-                    icon.name: "edit-copy"
-                    implicitWidth: 22
-                    implicitHeight: 22
-                    ToolTip.text: qsTr("Copy hash")
-                    ToolTip.visible: hovered
-                    ToolTip.delay: 400
-                    onClicked: hashTab.copyToClipboard(hashResultField.text)
-                }
-            }
-        }
-
-        // ── SRI format toggle + formatted output ──────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            visible: hashTab.sri !== "" && hashTab.sri !== hashResultField.text
-            spacing: 8
-
             Text {
-                text: qsTr("As SRI:")
-                color: hashTab.textColor
-                opacity: 0.5
-                font.pixelSize: hashTab.fpx(8)
+                Layout.bottomMargin: 7
+                text: hashTab.currentMode.field
+                color: "#a3b2c9"
+                font.pixelSize: UI.Theme.fontPx(10, hashTab.fs)
+            }
+            FieldInput {
+                id: inputField
+                objectName: "hashInput"
+                Layout.fillWidth: true
+                mono: true
+                placeholderText: hashTab.currentMode.placeholder
+                accent: hashTab.accentColor
+                textColor: hashTab.textColor
+                fs: hashTab.fs
+                onAccepted: hashTab.run()
+            }
+            UI.ActionButton {
+                objectName: "hashRun"
+                Layout.topMargin: 13
+                text: hashTab.isProbingHash ? qsTr("Calculating…") : qsTr("Calculate hash")
+                glyph: Qt.resolvedUrl("assets/ic_hash.svg")
+                primary: true
+                accent: hashTab.accentColor
+                font.pixelSize: UI.Theme.fontPx(10, hashTab.fs)
+                enabled: inputField.text.trim() !== "" && !hashTab.isProbingHash
+                onClicked: hashTab.run()
             }
 
-            TextEdit {
-                id: sriField
-                readOnly: true
-                selectByMouse: true
+            Notice {
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: hashTab.isError && hashTab.value !== ""
+                glyph: "ic_warning"
+                tone: UI.Theme.negative
+                emphasis: true
+                fs: hashTab.fs
+                text: hashTab.value
+            }
+            CodeBlock {
+                objectName: "hashValue"
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: !hashTab.isError && hashTab.value !== ""
+                label: hashTab.mode === "store" ? qsTr("NAR hash") : qsTr("Hash")
+                text: hashTab.value
+                textColor: hashTab.textColor
+                accent: hashTab.accentColor
+                fs: hashTab.fs
+                copyTip: qsTr("Copy hash")
+                onCopyRequested: t => hashTab.copyToClipboard(t)
+            }
+            CodeBlock {
+                objectName: "hashSri"
+                Layout.fillWidth: true
+                Layout.topMargin: 13
+                visible: !hashTab.isError && hashTab.sri !== "" && hashTab.sri !== hashTab.value
+                label: qsTr("SRI hash")
                 text: hashTab.sri
-                font.pixelSize: hashTab.fpx(8)
-                font.family: UI.Theme.fixedWidthFont.family
-                color: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.85)
+                textColor: hashTab.textColor
+                accent: hashTab.accentColor
+                fs: hashTab.fs
+                copyTip: qsTr("Copy SRI hash")
+                onCopyRequested: t => hashTab.copyToClipboard(t)
+            }
+            CodeBlock {
+                objectName: "hashSnippet"
                 Layout.fillWidth: true
-                wrapMode: Text.WrapAnywhere
-                selectionColor: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.35)
+                Layout.topMargin: 13
+                visible: hashTab.snippet !== ""
+                label: qsTr("Nix snippet")
+                text: hashTab.snippet
+                textColor: hashTab.textColor
+                accent: hashTab.accentColor
+                fs: hashTab.fs
+                copyTip: qsTr("Copy snippet")
+                onCopyRequested: t => hashTab.copyToClipboard(t)
             }
-
-            ToolButton {
-                icon.name: "edit-copy"
-                implicitWidth: 22
-                implicitHeight: 22
-                ToolTip.text: qsTr("Copy SRI hash")
-                ToolTip.visible: hovered
-                ToolTip.delay: 400
-                onClicked: hashTab.copyToClipboard(sriField.text)
-            }
-        }
-
-        // ── Nix snippet ───────────────────────────────────────────
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 4
-            visible: hashResultField.text !== "" && !hashResultField.isError
-
-            Text {
-                text: qsTr("Nix snippet:")
-                color: hashTab.textColor
-                opacity: 0.45
-                font.pixelSize: hashTab.fpx(8)
-            }
-
-            Rectangle {
+            Notice {
                 Layout.fillWidth: true
-                implicitHeight: snippetEdit.implicitHeight + 12
-                radius: 4
-                color: Qt.rgba(0, 0, 0, 0.22)
-                border.color: Qt.rgba(1, 1, 1, 0.07)
-                border.width: 1
-
-                RowLayout {
-                    anchors {
-                        fill: parent
-                        margins: 6
-                    }
-                    spacing: 6
-
-                    TextEdit {
-                        id: snippetEdit
-                        Layout.fillWidth: true
-                        readOnly: true
-                        selectByMouse: true
-                        wrapMode: Text.WrapAnywhere
-                        font.pixelSize: hashTab.fpx(8)
-                        font.family: UI.Theme.fixedWidthFont.family
-                        color: hashTab.textColor
-                        opacity: 0.85
-                        selectionColor: Qt.rgba(hashTab.accentColor.r, hashTab.accentColor.g, hashTab.accentColor.b, 0.35)
-
-                        text: {
-                            if (hashResultField.text === "" || hashResultField.isError)
-                                return "";
-                            const h = hashResultField.text;
-                            const input = hashInputField.text.trim();
-                            // Current nixpkgs prefers `hash = "sha256-…"`; keep the
-                            // legacy attribute only when Nix could not convert.
-                            const attr = hashTab.sri ? '  hash = "' + hashTab.sri + '";' : '  sha256 = "' + h + '";';
-                            switch (hashTab.mode) {
-                            case "url":
-                                return 'fetchurl {\n  url = "' + input + '";\n' + attr + '\n}';
-                            case "zip":
-                                return 'fetchzip {\n  url = "' + input + '";\n' + attr + '\n}';
-                            case "github":
-                                {
-                                    const parts = input.split("/");
-                                    return 'fetchFromGitHub {\n  owner = "' + (parts[0] || "") + '";\n  repo = "' + (parts[1] || "") + '";\n  rev = "' + (parts.slice(2).join("/") || "") + '";\n' + attr + '\n}';
-                                }
-                            case "file":
-                            case "store":
-                                return '# ' + (hashTab.sri || 'sha256: ' + h);
-                            default:
-                                return h;
-                            }
-                        }
-                    }
-
-                    ToolButton {
-                        icon.name: "edit-copy"
-                        implicitWidth: 22
-                        implicitHeight: 22
-                        Layout.alignment: Qt.AlignTop
-                        ToolTip.text: qsTr("Copy snippet")
-                        ToolTip.visible: hovered
-                        ToolTip.delay: 400
-                        onClicked: hashTab.copyToClipboard(snippetEdit.text)
-                    }
-                }
+                Layout.topMargin: 18
+                fs: hashTab.fs
+                text: qsTr("URLs, archives, and GitHub revisions are downloaded with nix-prefetch-url. GitHub mode hashes the source tarball of that revision.")
             }
         }
-
-        Item {
-            Layout.fillHeight: true
-        }
-
-        Text {
-            text: qsTr("nix-prefetch-url must be available on PATH. GitHub mode fetches the archive tarball.")
-            color: hashTab.textColor
-            opacity: 0.28
-            font.pixelSize: hashTab.fpx(8)
-            wrapMode: Text.WordWrap
-            Layout.fillWidth: true
-            horizontalAlignment: Text.AlignHCenter
-        }
-    }
-
-    function clearResult() {
-        hashResultField.text = "";
-        hashResultField.isError = false;
-        sri = "";
-    }
-
-    // React to hashResult pushed back from main
-    onHashResultChanged: {
-        const r = hashTab.hashResult;
-        if (r === null)
-            return;
-        hashResultField.isError = r.isError;
-        hashResultField.text = r.value;
-        sri = r.sri || "";
     }
 }

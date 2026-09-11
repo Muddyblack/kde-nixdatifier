@@ -1,12 +1,12 @@
 import QtQuick
-import QtQuick.Layouts
 import QtQuick.Controls
+import QtQuick.Layouts
 import "shared" as UI
+import "components"
 
 Item {
     id: storeUsageTab
 
-    // ── Required properties ───────────────────────────────────────────────────
     required property color accentColor
     required property color textColor
     required property real fs
@@ -14,9 +14,8 @@ Item {
     property bool isProbingStoreUsage: false
     required property string activeViewMode
 
-    function fpx(n) {
-        return UI.Theme.fontPx(n, fs);
-    }
+    readonly property var result: storeUsageResult
+    readonly property bool found: !!result && !result.isError && result.exists
 
     signal storeUsageRequested(string path)
     signal copyToClipboard(string text)
@@ -24,221 +23,197 @@ Item {
     anchors.fill: parent
     visible: activeViewMode === "storeusage"
 
-    ColumnLayout {
-        anchors.fill: parent
-        spacing: 10
+    function inspect() {
+        const path = pathField.text.trim();
+        if (path !== "" && !isProbingStoreUsage)
+            storeUsageRequested(path);
+    }
 
-        // ── Placeholder hint ──────────────────────────────────────
-        Text {
+    // A list of store paths under a counted heading, with a copy-all action.
+    component PathSection: ColumnLayout {
+        id: section
+        property string heading: ""
+        property var paths: []
+        property string copyTip: ""
+        property color textColor
+        property real fs: 1
+        signal copyRequested(string text)
+        spacing: 9
+        Subheading {
             Layout.fillWidth: true
-            text: qsTr("/nix/store/abc123...-some-package")
-            color: storeUsageTab.textColor
-            opacity: 0.35
-            font.pixelSize: storeUsageTab.fpx(8)
-            font.italic: true
-            wrapMode: Text.Wrap
-        }
-
-        // ── Input field ───────────────────────────────────────────
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 6
-
-            TextField {
-                id: pathField
-                Layout.fillWidth: true
-                implicitHeight: 28
-                font.pixelSize: storeUsageTab.fpx(9)
-                font.family: UI.Theme.fixedWidthFont.family
-                placeholderText: qsTr("Enter a store path…")
-                leftPadding: 8
-                rightPadding: 8
-                color: storeUsageTab.textColor
-                onAccepted: inspectButton.clicked()
-                background: Rectangle {
-                    radius: 4
-                    color: Qt.rgba(1, 1, 1, 0.06)
-                    border.color: pathField.activeFocus ? Qt.rgba(storeUsageTab.accentColor.r, storeUsageTab.accentColor.g, storeUsageTab.accentColor.b, 0.6) : Qt.rgba(1, 1, 1, 0.15)
-                    border.width: 1
-                    Behavior on border.color {
-                        ColorAnimation {
-                            duration: 120
-                        }
-                    }
-                }
-            }
-
-            Button {
-                id: inspectButton
-                text: storeUsageTab.isProbingStoreUsage ? qsTr("Inspecting…") : qsTr("Inspect")
-                implicitHeight: 28
-                enabled: pathField.text.trim() !== "" && !storeUsageTab.isProbingStoreUsage
-                font.pixelSize: storeUsageTab.fpx(9)
-                font.bold: true
-                onClicked: storeUsageTab.storeUsageRequested(pathField.text.trim())
-                background: Rectangle {
-                    radius: 4
-                    color: parent.enabled ? (parent.hovered ? Qt.rgba(storeUsageTab.accentColor.r, storeUsageTab.accentColor.g, storeUsageTab.accentColor.b, 0.30) : Qt.rgba(storeUsageTab.accentColor.r, storeUsageTab.accentColor.g, storeUsageTab.accentColor.b, 0.16)) : Qt.rgba(1, 1, 1, 0.04)
-                    border.color: parent.enabled ? storeUsageTab.accentColor : Qt.rgba(1, 1, 1, 0.1)
-                    border.width: 1
-                }
+            text: section.heading
+            detail: String(section.paths.length)
+            fs: section.fs
+            UI.ActionButton {
+                glyph: Qt.resolvedUrl("assets/ic_copy.svg")
+                flatStyle: true
+                implicitHeight: 23
+                tip: section.copyTip
+                onClicked: section.copyRequested(section.paths.join("\n"))
             }
         }
-
         Rectangle {
             Layout.fillWidth: true
-            implicitHeight: 1
-            color: Qt.rgba(1, 1, 1, 0.08)
+            implicitHeight: list.implicitHeight + 12
+            radius: 9
+            color: "#03ffffff"
+            border.color: "#0effffff"
+            ColumnLayout {
+                id: list
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.margins: 6
+                anchors.leftMargin: 12
+                anchors.rightMargin: 12
+                spacing: 0
+                Repeater {
+                    model: section.paths
+                    Text {
+                        required property string modelData
+                        required property int index
+                        Layout.fillWidth: true
+                        topPadding: 6
+                        bottomPadding: 6
+                        text: modelData
+                        textFormat: Text.PlainText
+                        color: section.textColor
+                        opacity: .85
+                        font.family: UI.Theme.fixedWidthFont.family
+                        font.pixelSize: UI.Theme.fontPx(9, section.fs)
+                        wrapMode: Text.WrapAnywhere
+                        Rectangle {
+                            visible: index > 0
+                            width: parent.width
+                            height: 1
+                            color: "#0bffffff"
+                        }
+                    }
+                }
+            }
         }
+    }
 
-        // ── Results ─────────────────────────────────────────────────
-        Flickable {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            contentWidth: width
-            contentHeight: resultsColumn.implicitHeight
-            ScrollBar.vertical: ScrollBar {
-                policy: ScrollBar.AsNeeded
+    ScrollView {
+        id: scroll
+        anchors.fill: parent
+        clip: true
+        contentWidth: availableWidth
+        ColumnLayout {
+            width: scroll.availableWidth
+            spacing: 0
+
+            Text {
+                Layout.fillWidth: true
+                Layout.bottomMargin: 14
+                text: qsTr("Find out what keeps a store path from being garbage-collected.")
+                color: "#9bacc4"
+                font.pixelSize: UI.Theme.fontPx(11, storeUsageTab.fs)
+                wrapMode: Text.Wrap
+                lineHeight: 1.5
+            }
+            Text {
+                Layout.bottomMargin: 7
+                text: qsTr("Store path")
+                color: "#a3b2c9"
+                font.pixelSize: UI.Theme.fontPx(10, storeUsageTab.fs)
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+                FieldInput {
+                    id: pathField
+                    objectName: "storePathInput"
+                    Layout.fillWidth: true
+                    mono: true
+                    placeholderText: "/nix/store/…-package-1.0"
+                    accent: storeUsageTab.accentColor
+                    textColor: storeUsageTab.textColor
+                    fs: storeUsageTab.fs
+                    onAccepted: storeUsageTab.inspect()
+                }
+                UI.ActionButton {
+                    objectName: "storePathInspect"
+                    implicitHeight: pathField.implicitHeight
+                    text: storeUsageTab.isProbingStoreUsage ? qsTr("Inspecting…") : qsTr("Inspect")
+                    glyph: Qt.resolvedUrl("assets/ic_search.svg")
+                    primary: true
+                    accent: storeUsageTab.accentColor
+                    font.pixelSize: UI.Theme.fontPx(10, storeUsageTab.fs)
+                    enabled: pathField.text.trim() !== "" && !storeUsageTab.isProbingStoreUsage
+                    onClicked: storeUsageTab.inspect()
+                }
             }
 
-            ColumnLayout {
-                id: resultsColumn
-                width: parent.width
-                spacing: 12
-
-                Text {
-                    visible: !storeUsageTab.storeUsageResult
-                    Layout.fillWidth: true
-                    Layout.topMargin: 20
-                    text: qsTr("Paste a store path above to see why it is (or isn't) kept alive.")
-                    color: storeUsageTab.textColor
-                    opacity: 0.38
-                    wrapMode: Text.WordWrap
-                    horizontalAlignment: Text.AlignHCenter
-                    font.pixelSize: storeUsageTab.fpx(9)
-                }
-
-                Text {
-                    visible: !!storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.isError
-                    Layout.fillWidth: true
-                    Layout.topMargin: 10
-                    text: storeUsageTab.storeUsageResult ? (storeUsageTab.storeUsageResult.value || "") : ""
-                    color: "#ff7777"
-                    wrapMode: Text.Wrap
-                    font.pixelSize: storeUsageTab.fpx(9)
-                }
-
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    visible: !!storeUsageTab.storeUsageResult && !storeUsageTab.storeUsageResult.isError
-                    spacing: 12
-
-                    Text {
-                        visible: !!storeUsageTab.storeUsageResult && !storeUsageTab.storeUsageResult.exists
-                        Layout.fillWidth: true
-                        text: qsTr("This path no longer exists on disk.")
-                        color: "#ffaa44"
-                        wrapMode: Text.Wrap
-                        font.pixelSize: storeUsageTab.fpx(9)
+            Notice {
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: !!storeUsageTab.result && storeUsageTab.result.isError
+                glyph: "ic_warning"
+                tone: UI.Theme.negative
+                emphasis: true
+                fs: storeUsageTab.fs
+                text: storeUsageTab.result && storeUsageTab.result.isError ? storeUsageTab.result.value : ""
+            }
+            Notice {
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: !!storeUsageTab.result && !storeUsageTab.result.isError && !storeUsageTab.result.exists
+                glyph: "ic_info"
+                tone: UI.Theme.changed
+                emphasis: true
+                fs: storeUsageTab.fs
+                text: qsTr("This path is no longer on disk; it has already been collected.")
+            }
+            InfoRows {
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: storeUsageTab.found
+                textColor: storeUsageTab.textColor
+                fs: storeUsageTab.fs
+                rows: storeUsageTab.found ? [
+                    {
+                        label: qsTr("Status"),
+                        value: storeUsageTab.result.roots.length ? qsTr("Kept alive") : qsTr("Collectable"),
+                        tone: storeUsageTab.result.roots.length ? UI.Theme.changed : UI.Theme.positive
+                    },
+                    {
+                        label: qsTr("Closure size"),
+                        value: UI.Theme.formatBytes(storeUsageTab.result.closureBytes) || "—"
                     }
-
-                    Text {
-                        visible: !!storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.exists && storeUsageTab.storeUsageResult.closureBytes > 0
-                        Layout.fillWidth: true
-                        text: qsTr("Closure size: %1").arg(UI.Theme.formatBytes(storeUsageTab.storeUsageResult ? storeUsageTab.storeUsageResult.closureBytes : 0))
-                        color: storeUsageTab.textColor
-                        opacity: 0.6
-                        font.pixelSize: storeUsageTab.fpx(9)
-                    }
-
-                    // ── GC roots ──────────────────────────────────
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: !!storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.exists
-                        spacing: 4
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                                Layout.fillWidth: true
-                                text: storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.roots.length > 0 ? qsTr("Kept alive by %1 GC root(s):").arg(storeUsageTab.storeUsageResult.roots.length) : qsTr("No GC roots found — eligible for collection.")
-                                color: storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.roots.length > 0 ? storeUsageTab.textColor : "#55cc55"
-                                font.pixelSize: storeUsageTab.fpx(9)
-                                font.bold: true
-                                wrapMode: Text.Wrap
-                            }
-                            ToolButton {
-                                visible: !!storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.roots.length > 0
-                                icon.name: "edit-copy"
-                                implicitWidth: 22
-                                implicitHeight: 22
-                                ToolTip.text: qsTr("Copy roots")
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 400
-                                onClicked: storeUsageTab.copyToClipboard(storeUsageTab.storeUsageResult.roots.join("\n"))
-                            }
-                        }
-
-                        Repeater {
-                            model: storeUsageTab.storeUsageResult ? storeUsageTab.storeUsageResult.roots : []
-                            Text {
-                                required property string modelData
-                                Layout.fillWidth: true
-                                text: modelData
-                                textFormat: Text.PlainText
-                                color: storeUsageTab.textColor
-                                opacity: 0.75
-                                font.family: UI.Theme.fixedWidthFont.family
-                                font.pixelSize: storeUsageTab.fpx(8)
-                                wrapMode: Text.WrapAnywhere
-                            }
-                        }
-                    }
-
-                    // ── Referrers ─────────────────────────────────
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        visible: !!storeUsageTab.storeUsageResult && storeUsageTab.storeUsageResult.exists && storeUsageTab.storeUsageResult.referrers.length > 0
-                        spacing: 4
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            Text {
-                                Layout.fillWidth: true
-                                text: qsTr("Referenced by %1 path(s):").arg(storeUsageTab.storeUsageResult ? storeUsageTab.storeUsageResult.referrers.length : 0)
-                                color: storeUsageTab.textColor
-                                opacity: 0.7
-                                font.pixelSize: storeUsageTab.fpx(9)
-                                font.bold: true
-                            }
-                            ToolButton {
-                                icon.name: "edit-copy"
-                                implicitWidth: 22
-                                implicitHeight: 22
-                                ToolTip.text: qsTr("Copy referrers")
-                                ToolTip.visible: hovered
-                                ToolTip.delay: 400
-                                onClicked: storeUsageTab.copyToClipboard(storeUsageTab.storeUsageResult.referrers.join("\n"))
-                            }
-                        }
-
-                        Repeater {
-                            model: storeUsageTab.storeUsageResult ? storeUsageTab.storeUsageResult.referrers : []
-                            Text {
-                                required property string modelData
-                                Layout.fillWidth: true
-                                text: modelData
-                                textFormat: Text.PlainText
-                                color: storeUsageTab.textColor
-                                opacity: 0.65
-                                font.family: UI.Theme.fixedWidthFont.family
-                                font.pixelSize: storeUsageTab.fpx(8)
-                                wrapMode: Text.WrapAnywhere
-                            }
-                        }
-                    }
-                }
+                ] : []
+            }
+            Notice {
+                Layout.fillWidth: true
+                Layout.topMargin: 9
+                visible: storeUsageTab.found && storeUsageTab.result.roots.length === 0
+                glyph: "ic_check"
+                tone: UI.Theme.positive
+                emphasis: true
+                fs: storeUsageTab.fs
+                text: qsTr("No GC root reaches this path. The next garbage collection will remove it.")
+            }
+            PathSection {
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: storeUsageTab.found && storeUsageTab.result.roots.length > 0
+                heading: qsTr("Kept alive by")
+                paths: storeUsageTab.found ? storeUsageTab.result.roots : []
+                copyTip: qsTr("Copy GC roots")
+                textColor: storeUsageTab.textColor
+                fs: storeUsageTab.fs
+                onCopyRequested: t => storeUsageTab.copyToClipboard(t)
+            }
+            PathSection {
+                Layout.fillWidth: true
+                Layout.topMargin: 18
+                visible: storeUsageTab.found && storeUsageTab.result.referrers.length > 0
+                heading: qsTr("Referenced by")
+                paths: storeUsageTab.found ? storeUsageTab.result.referrers : []
+                copyTip: qsTr("Copy referrers")
+                textColor: storeUsageTab.textColor
+                fs: storeUsageTab.fs
+                onCopyRequested: t => storeUsageTab.copyToClipboard(t)
             }
         }
     }

@@ -65,6 +65,14 @@ expanded-row edges that follow the Glow setting. Compare results sit directly
 below the generation pickers; row style remains configurable in Settings. Tools
 starts with the utility cards, without introductory text above them.
 
+The four tool pages (Secrets, Hash calculator, Rebuild history, Store usage) share
+the preview's overlay vocabulary through small components in `components/`: a
+section intro with a status `Tag`, Updates-style `ToolRow` cards, `InfoRows` for
+label/value metadata, `FieldInput` fields, selectable `CodeBlock`s with a copy
+action, and `Notice` hints or tinted warnings. Colors come from `shared/Theme.qml`,
+and work progress uses the overlay header's spinning flake rather than per-page
+spinners.
+
 Each update input has separate preview, update-only, and source actions, with
 hover/focus descriptions instead of a permanently displayed legend. Collapsing
 only changes visibility; cached packages and their local filters remain available.
