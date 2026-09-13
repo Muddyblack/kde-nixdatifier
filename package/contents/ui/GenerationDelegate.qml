@@ -71,17 +71,83 @@ Item {
 
     readonly property bool isExpanded: gen.number === selectedGenNum
     readonly property var details: detailsCache[gen.number] || ({})
+    // Parse a size string like "+45.6 MiB" or "-12 KiB" into bytes.
+    function parseSizeStr(s) {
+        if (!s)
+            return 0;
+        const m = s.trim().match(/^([+-]?\d[\d.,]*)\s*(B|KB?|KiB|MB?|MiB|GB?|GiB|TB?|TiB)?$/i);
+        if (!m)
+            return 0;
+        const num = parseFloat(m[1].replace(/,/g, ""));
+        const unit = (m[2] || "B").toUpperCase();
+        const mult = ({
+                "B": 1,
+                "K": 1024,
+                "KB": 1024,
+                "KIB": 1024,
+                "M": 1048576,
+                "MB": 1048576,
+                "MIB": 1048576,
+                "G": 1073741824,
+                "GB": 1073741824,
+                "GIB": 1073741824,
+                "T": 1099511627776,
+                "TB": 1099511627776,
+                "TIB": 1099511627776
+            });
+        return Math.round(num * (mult[unit] || 1));
+    }
+
     readonly property var changeSummary: {
         if (changeCounts && changeCounts.status === "ok")
             return changeCounts;
         if (details.partial || !Array.isArray(details.diff) || (details.diffMode === "booted" && !gen.booted))
             return null;
+        const added = details.diff.filter(p => p.type === "added");
+        const removed = details.diff.filter(p => p.type === "removed");
+        const addedBytes = added.reduce((acc, p) => acc + Math.max(0, parseSizeStr(p.size)), 0);
+        const removedBytes = removed.reduce((acc, p) => acc + Math.max(0, -parseSizeStr(p.size)), 0);
         return {
-            added: details.diff.filter(p => p.type === "added").length,
-            removed: details.diff.filter(p => p.type === "removed").length,
-            changed: details.diff.filter(p => p.type !== "added" && p.type !== "removed").length
+            added: added.length,
+            removed: removed.length,
+            changed: details.diff.filter(p => p.type !== "added" && p.type !== "removed").length,
+            addedBytes: addedBytes,
+            removedBytes: removedBytes
         };
     }
+
+    readonly property var changeBadgeModel: {
+        if (!changeSummary)
+            return [];
+        const s = changeSummary;
+        const hasBytes = s.addedBytes > 0 || s.removedBytes > 0;
+        return [
+            {
+                text: "+" + (hasBytes && s.addedBytes > 0 ? UI.Theme.formatBytes(s.addedBytes) : s.added),
+                color: UI.Theme.positive
+            },
+            {
+                text: "−" + (hasBytes && s.removedBytes > 0 ? UI.Theme.formatBytes(s.removedBytes) : s.removed),
+                color: UI.Theme.negative
+            },
+            {
+                text: "~" + s.changed,
+                color: UI.Theme.changed
+            }
+        ];
+    }
+
+    readonly property string changeTip: {
+        if (!changeSummary)
+            return qsTr("Package counts are not available yet");
+        const s = changeSummary;
+        const hasBytes = s.addedBytes > 0 || s.removedBytes > 0;
+        let tip = qsTr("Changes from the previous generation: %1 added, %2 removed, %3 changed").arg(s.added).arg(s.removed).arg(s.changed);
+        if (hasBytes)
+            tip += "\n" + qsTr("+%1 / −%2 store size").arg(UI.Theme.formatBytes(s.addedBytes) || "0 B").arg(UI.Theme.formatBytes(s.removedBytes) || "0 B");
+        return tip;
+    }
+
     readonly property var configDiff: configDiffCache[gen.number] || ({})
     readonly property real headerH: Math.max(80 * fs, headerContents.implicitHeight + 16 * fs)
     readonly property bool compactActions: generationHeader.width < 420 * fs
@@ -250,20 +316,7 @@ Item {
                         font.pixelSize: 10 * genDelegate.fs
                     }
                     Repeater {
-                        model: genDelegate.changeSummary ? [
-                            {
-                                text: "+" + genDelegate.changeSummary.added,
-                                color: UI.Theme.positive
-                            },
-                            {
-                                text: "−" + genDelegate.changeSummary.removed,
-                                color: UI.Theme.negative
-                            },
-                            {
-                                text: "~" + genDelegate.changeSummary.changed,
-                                color: UI.Theme.changed
-                            }
-                        ] : []
+                        model: genDelegate.changeBadgeModel
                         Text {
                             required property var modelData
                             text: modelData.text
@@ -275,8 +328,9 @@ Item {
                         id: countsHover
                     }
                     ToolTip.visible: countsHover.hovered
-                    ToolTip.text: genDelegate.changeSummary ? qsTr("Changes from the previous generation: %1 added, %2 removed, %3 changed").arg(genDelegate.changeSummary.added).arg(genDelegate.changeSummary.removed).arg(genDelegate.changeSummary.changed) : qsTr("Package counts are not available yet")
+                    ToolTip.text: genDelegate.changeTip
                 }
+
                 UI.DisclosureButton {
                     objectName: "toggleGeneration-" + genDelegate.gen.number
                     expanded: genDelegate.isExpanded

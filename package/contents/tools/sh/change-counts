@@ -1,14 +1,41 @@
 #!/usr/bin/env bash
 # Usage: change-counts <target-closure> <base-closure>
 # Counts package additions, removals, and changes between two immutable
-# closures and prints them as {"added":N,"removed":N,"changed":N}.
+# closures and prints them as {"added":N,"removed":N,"changed":N,
+# "addedBytes":N,"removedBytes":N}.
 # Plain bash on purpose: python3 is not on a default NixOS PATH.
 set -uo pipefail
 shopt -s extglob
 export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
 
 target=${1:?}; base=${2:?}
-added=0 removed=0 changed=0
+added=0 removed=0 changed=0 added_bytes=0 removed_bytes=0
+
+# Convert a human-readable size token (e.g. "+45.6 MiB", "-12 KiB", "+512 B")
+# to an integer number of bytes. Prints 0 on unrecognised input.
+parse_bytes() {
+    local token=${1//,/}   # strip thousands separators
+    local sign=1
+    [[ "$token" =~ ^- ]] && sign=-1
+    token=${token#[+-]}
+    local num unit
+    read -r num unit <<< "$token"
+    num=${num//,/}
+    local mult=1
+    case "$unit" in
+        KiB|KB|K) mult=1024 ;;
+        MiB|MB|M) mult=$((1024*1024)) ;;
+        GiB|GB|G) mult=$((1024*1024*1024)) ;;
+        TiB|TB|T) mult=$((1024*1024*1024*1024)) ;;
+        B|"")      mult=1 ;;
+        *) echo 0; return ;;
+    esac
+    # Use awk for float→int multiplication (bash can't do floats).
+    local bytes
+    bytes=$(awk -v n="$num" -v m="$mult" 'BEGIN { printf "%d", n * m }' 2>/dev/null) || bytes=0
+    echo $((sign * bytes))
+}
+
 if [[ "$target" != "$base" ]]; then
     out=$(nix --extra-experimental-features 'nix-command flakes' store diff-closures "$base" "$target") || exit $?
     while IFS= read -r line; do
@@ -16,19 +43,27 @@ if [[ "$target" != "$base" ]]; then
         # Same shape as the QML parser: "name: old → new[, ±size]".
         [[ "$line" =~ ^[[:space:]]*[^:]+:[[:space:]]+(.*[^[:space:]])[[:space:]]*$ ]] || continue
         rest=${BASH_REMATCH[1]}
-        [[ "$rest" =~ ^(.*),[[:space:]]+[+-]?[0-9][0-9.,]*[[:space:]]*[KMGT]?i?B$ ]] && rest=${BASH_REMATCH[1]}
+        size_token=""
+        if [[ "$rest" =~ ^(.*),([[:space:]]+[+-]?[0-9][0-9.,]*[[:space:]]*[KMGT]?i?B)$ ]]; then
+            rest=${BASH_REMATCH[1]}
+            size_token=${BASH_REMATCH[2]}
+        fi
         case "$rest" in
             *" → "*) old=${rest%%" → "*}; new=${rest#*" → "} ;;
             *" -> "*) old=${rest%%" -> "*}; new=${rest#*" -> "} ;;
             *) continue ;;
         esac
+        local_bytes=$(parse_bytes "$size_token")
         if [[ "$old" == "∅" || "$old" == null ]]; then
             added=$((added + 1))
+            [[ "$local_bytes" -gt 0 ]] && added_bytes=$((added_bytes + local_bytes))
         elif [[ "$new" == "∅" || "$new" == null ]]; then
             removed=$((removed + 1))
+            [[ "$local_bytes" -lt 0 ]] && removed_bytes=$((removed_bytes - local_bytes))
         else
             changed=$((changed + 1))
         fi
     done <<< "$out"
 fi
-printf '{"added": %d, "removed": %d, "changed": %d}\n' "$added" "$removed" "$changed"
+printf '{"added": %d, "removed": %d, "changed": %d, "addedBytes": %d, "removedBytes": %d}\n' \
+    "$added" "$removed" "$changed" "$added_bytes" "$removed_bytes"
