@@ -250,12 +250,50 @@ Item {
             tryCompare(source.popup, "opened", true);
             tryVerify(() => source.popup.contentItem.itemAtIndex(0) !== null);
             const option = source.popup.contentItem.itemAtIndex(0);
+            compare(source.popup.popupType, 0); // Popup.Item stays on the grabbed panel.
+            mouseMove(option, option.width / 2, option.height / 2);
+            wait(80);
+            verify(source.popup.opened);
+            verify(option.visible);
+            compare(option.contentItem.text, "#661 · Next boot");
             mouseClick(option);
             tryCompare(source.popup, "visible", false);
             compare(source.currentValue, 661);
             compare(selectedText.text, "#661 · Next boot");
             target.currentIndex = 1;
             compare(findChild(target, "generationPickerText").text, "#660 · Booted");
+        }
+        function test_compare_package_search() {
+            core.pairDiffCache = {
+                "661_660": {
+                    diff: [
+                        {
+                            name: "codex",
+                            type: "upgrade",
+                            oldVersion: "1",
+                            newVersion: "2"
+                        },
+                        {
+                            name: "firefox",
+                            type: "added",
+                            newVersion: "1"
+                        }
+                    ]
+                }
+            };
+            app.openCompareInDiffTab(661, 660);
+            const packages = findChild(app, "comparePackages");
+            const search = findChild(packages, "packageSearch");
+            search.text = "  CoDeX  ";
+            compare(packages.filtered.length, 1);
+            compare(packages.filtered[0].name, "codex");
+            search.text = "missing-app";
+            compare(packages.filtered.length, 0);
+            search.forceActiveFocus();
+            keyClick(Qt.Key_Escape);
+            compare(search.text, "");
+            compare(packages.filtered.length, 2);
+            compare(core.activeViewMode, "diff");
         }
         function test_empty_search_keeps_timeline_rail() {
             const timeline = findChild(app, "generationTimeline");

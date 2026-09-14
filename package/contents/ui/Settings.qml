@@ -41,4 +41,6 @@ QtObject {
     property bool enableMotion: true
     property string pillMode: "always"
     property string popupPosition: "top-right"
+    property int panelEdgeOffset: 0
+    property int panelSideOffset: 0
 }

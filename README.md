@@ -73,7 +73,7 @@
 Both desktops share one QML application (`package/contents/ui/Engine.qml` and its views). Only the host differs:
 
 - **Plasma:** the plasmoid. Settings live in Plasma's widget configuration. Preview with `make view`.
-- **Hyprland:** a Quickshell popup with a configurable panel pill (always visible, revealed at the screen edge, or tray only), a tray icon, and six popup positions. Settings are stored in `~/.config/nixdatifier/hyprland.json`.
+- **Hyprland:** a Quickshell popup with a configurable panel pill (always visible, revealed at the screen edge, or tray only), a tray icon, six popup positions, and edge/side insets to avoid overlapping other widgets. Drag the pill to move it anywhere on its current screen; release to save, or click to open. The popup follows and stays within the screen. Adjust the insets under Design → Hyprland panel (pixels from the selected edges). Settings are stored in `~/.config/nixdatifier/hyprland.json`.
 
 ### Starting and stopping the Quickshell panel
 

@@ -24,6 +24,8 @@ ShellRoot {
             to[f.key] = from[f.key];
         to.pillMode = from.pillMode;
         to.popupPosition = from.popupPosition;
+        to.panelEdgeOffset = from.panelEdgeOffset;
+        to.panelSideOffset = from.panelSideOffset;
     }
     function configure() {
         copySettings(cfg, draft);
@@ -88,6 +90,8 @@ ShellRoot {
             property bool enableMotion: true
             property string pillMode: "always"
             property string popupPosition: "top-right"
+            property int panelEdgeOffset: 0
+            property int panelSideOffset: 0
         }
     }
     App.Settings {
@@ -171,33 +175,34 @@ ShellRoot {
     PanelWindow {
         id: pillWindow
         property bool revealed: false
-        readonly property bool shown: cfg.pillMode === "always" || revealed || root.popupOpen
+        readonly property bool shown: cfg.pillMode === "always" || revealed || root.popupOpen || pillDrag.pressed
         visible: cfg.pillMode !== "tray"
         color: "transparent"
         exclusiveZone: 0
         aboveWindows: true
-        implicitWidth: shown ? 106 : 72
-        implicitHeight: shown ? 38 : 4
+        // A stable surface keeps drag coordinates independent of compositor moves.
         anchors {
-            top: root.topEdge
-            bottom: !root.topEdge
-            left: root.leftEdge
-            right: root.rightEdge
+            top: true
+            bottom: true
+            left: true
+            right: true
         }
-        margins {
-            top: shown ? 4 : 0
-            bottom: shown ? 4 : 0
-            left: 8
-            right: 8
+        mask: Region {
+            item: pillBox
         }
         Rectangle {
-            anchors.fill: parent
-            anchors.margins: 2
+            id: pillBox
+            width: pillWindow.shown ? 106 : 72
+            height: pillWindow.shown ? 38 : 4
+            readonly property real restingX: root.leftEdge ? 8 + cfg.panelSideOffset : root.rightEdge ? pillWindow.width - width - 8 - cfg.panelSideOffset : (pillWindow.width - width) / 2
+            readonly property real restingY: root.topEdge ? (pillWindow.shown ? 4 : 0) + cfg.panelEdgeOffset : pillWindow.height - height - (pillWindow.shown ? 4 : 0) - cfg.panelEdgeOffset
+            x: pillDrag.moving ? pillDrag.dragX : Math.max(0, Math.min(pillWindow.width - width, restingX))
+            y: pillDrag.moving ? pillDrag.dragY : Math.max(0, Math.min(pillWindow.height - height, restingY))
             radius: 17
-            color: cfg.bgColor
-            border.color: UI.Theme.line
-            visible: pillWindow.shown
+            color: pillWindow.shown ? cfg.bgColor : "transparent"
+            border.color: pillWindow.shown ? UI.Theme.line : "transparent"
             App.CompactView {
+                visible: pillWindow.shown
                 anchors.fill: parent
                 anchors.margins: 3
                 accentColor: core.accentColor
@@ -213,9 +218,56 @@ ShellRoot {
                 iconStyle: cfg.iconStyle
                 onToggleExpanded: root.popupOpen = !root.popupOpen
             }
+            MouseArea {
+                id: pillDrag
+                anchors.fill: parent
+                hoverEnabled: true
+                preventStealing: true
+                cursorShape: moving ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                property bool moving: false
+                property point pressPoint
+                property real startX: 0
+                property real startY: 0
+                property real dragX: 0
+                property real dragY: 0
+                onPressed: mouse => {
+                    pressPoint = mapToItem(pillBox.parent, mouse.x, mouse.y);
+                    startX = pillBox.x;
+                    startY = pillBox.y;
+                }
+                onPositionChanged: mouse => {
+                    if (!pressed)
+                        return;
+                    const point = mapToItem(pillBox.parent, mouse.x, mouse.y);
+                    const dx = point.x - pressPoint.x;
+                    const dy = point.y - pressPoint.y;
+                    if (!moving && Math.hypot(dx, dy) < Qt.styleHints.startDragDistance)
+                        return;
+                    dragX = Math.max(8, Math.min(pillWindow.width - pillBox.width - 8, startX + dx));
+                    dragY = Math.max(4, Math.min(pillWindow.height - pillBox.height - 4, startY + dy));
+                    if (!moving) {
+                        moving = true;
+                        root.popupOpen = false;
+                    }
+                }
+                onReleased: {
+                    if (moving) {
+                        const left = dragX + pillBox.width / 2 < pillWindow.width / 2;
+                        const top = dragY + pillBox.height / 2 < pillWindow.height / 2;
+                        cfg.popupPosition = (top ? "top-" : "bottom-") + (left ? "left" : "right");
+                        cfg.panelSideOffset = Math.round(Math.max(0, (left ? dragX : pillWindow.width - pillBox.width - dragX) - 8));
+                        cfg.panelEdgeOffset = Math.round(Math.max(0, (top ? dragY : pillWindow.height - pillBox.height - dragY) - 4));
+                        moving = false;
+                    } else {
+                        root.popupOpen = !root.popupOpen;
+                    }
+                }
+                onCanceled: moving = false
+            }
         }
         HoverHandler {
             id: hover
+            parent: pillBox
             onHoveredChanged: {
                 if (hovered) {
                     pillWindow.revealed = true;
@@ -227,7 +279,7 @@ ShellRoot {
         Timer {
             id: hidePill
             interval: 400
-            onTriggered: if (!hover.hovered)
+            onTriggered: if (!hover.hovered && !pillDrag.pressed)
                 pillWindow.revealed = false
         }
         Timer {
@@ -239,13 +291,13 @@ ShellRoot {
     // Separate popup so the tooltip isn't clipped to the pill's tiny layer surface.
     PopupWindow {
         id: pillTip
-        visible: pillWindow.visible && hover.hovered && !tipDelay.running && pillWindow.shown && !root.popupOpen && !root.smokeTest
+        visible: !pillDrag.pressed && pillWindow.visible && hover.hovered && !tipDelay.running && pillWindow.shown && !root.popupOpen && !root.smokeTest
         color: "transparent"
         anchor.window: pillWindow
-        anchor.rect.x: 0
-        anchor.rect.y: root.topEdge ? 0 : -6
-        anchor.rect.width: pillWindow.width
-        anchor.rect.height: pillWindow.height + 6
+        anchor.rect.x: pillBox.x
+        anchor.rect.y: pillBox.y + (root.topEdge ? 0 : -6)
+        anchor.rect.width: pillBox.width
+        anchor.rect.height: pillBox.height + 6
         anchor.edges: (root.topEdge ? Edges.Bottom : Edges.Top) | (root.leftEdge ? Edges.Left : root.rightEdge ? Edges.Right : 0)
         anchor.gravity: (root.topEdge ? Edges.Bottom : Edges.Top) | (root.leftEdge ? Edges.Right : root.rightEdge ? Edges.Left : 0)
         implicitWidth: tipBox.implicitWidth
@@ -299,10 +351,10 @@ ShellRoot {
             right: root.rightEdge
         }
         margins {
-            top: 46
-            bottom: 46
-            left: 12
-            right: 12
+            top: Math.min(46 + cfg.panelEdgeOffset, Math.max(12, (popup.screen ? popup.screen.height : 1080) - popup.height - 12))
+            bottom: Math.min(46 + cfg.panelEdgeOffset, Math.max(12, (popup.screen ? popup.screen.height : 1080) - popup.height - 12))
+            left: Math.min(12 + cfg.panelSideOffset, Math.max(12, (popup.screen ? popup.screen.width : 1920) - popup.width - 12))
+            right: Math.min(12 + cfg.panelSideOffset, Math.max(12, (popup.screen ? popup.screen.width : 1920) - popup.width - 12))
         }
         Item {
             anchors.fill: parent

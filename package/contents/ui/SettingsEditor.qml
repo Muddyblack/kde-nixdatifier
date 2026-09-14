@@ -236,6 +236,56 @@ Pane {
                         currentIndex: Math.max(0, model.indexOf(editor.settings.popupPosition))
                         onActivated: editor.settings.popupPosition = currentText
                     }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: qsTr("Edge inset")
+                            color: UI.Theme.textColor
+                            Layout.fillWidth: true
+                        }
+                        SpinBox {
+                            from: 0
+                            to: 16384
+                            stepSize: 4
+                            editable: true
+                            value: editor.settings.panelEdgeOffset
+                            onValueModified: editor.settings.panelEdgeOffset = value
+                            Accessible.name: qsTr("Edge inset in pixels")
+                        }
+                        Text {
+                            text: qsTr("px")
+                            color: UI.Theme.muted
+                        }
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Text {
+                            text: qsTr("Side inset")
+                            color: UI.Theme.textColor
+                            Layout.fillWidth: true
+                        }
+                        SpinBox {
+                            from: 0
+                            to: 16384
+                            stepSize: 4
+                            editable: true
+                            enabled: !editor.settings.popupPosition.endsWith("center")
+                            value: editor.settings.panelSideOffset
+                            onValueModified: editor.settings.panelSideOffset = value
+                            Accessible.name: qsTr("Side inset in pixels")
+                        }
+                        Text {
+                            text: qsTr("px")
+                            color: UI.Theme.muted
+                        }
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        text: qsTr("Drag the pill to reposition it, or adjust the insets to avoid other widgets.")
+                        wrapMode: Text.WordWrap
+                        color: UI.Theme.muted
+                        font: UI.Theme.smallFont
+                    }
                 }
             }
         }

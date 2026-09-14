@@ -197,7 +197,7 @@ class Helpers(unittest.TestCase):
                 )
             return found
 
-        host_only = {"pillMode", "popupPosition"}
+        host_only = {"pillMode", "popupPosition", "panelEdgeOffset", "panelSideOffset"}
         settings = qml_defaults((ui / "Settings.qml").read_text())
         shell = (repo / "hyprland/NixdatifierShell.qml").read_text()
         adapter = qml_defaults(

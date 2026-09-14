@@ -20,9 +20,10 @@ ColumnLayout {
     property real maximumHeight: 280
     property string heading: qsTr("Package changes")
     property string kind: "all"
+    property string searchPlaceholder: qsTr("Filter packages…")
     signal copyToClipboard(string text)
     spacing: 8
-    readonly property var filtered: packages.filter(p => (kind === "all" || p.type === kind) && (p.name || "").toLowerCase().indexOf(search.text.toLowerCase()) >= 0)
+    readonly property var filtered: packages.filter(p => (kind === "all" || p.type === kind) && (p.name || "").toLowerCase().indexOf(search.text.trim().toLowerCase()) >= 0)
     RowLayout {
         Layout.fillWidth: true
         Text {
@@ -34,8 +35,18 @@ ColumnLayout {
         }
         TextField {
             id: search
+            objectName: "packageSearch"
+            Accessible.name: root.searchPlaceholder
+            Keys.onEscapePressed: event => {
+                if (text.length) {
+                    clear();
+                    event.accepted = true;
+                } else {
+                    event.accepted = false;
+                }
+            }
             visible: root.filterEnabled
-            Layout.preferredWidth: Math.min(135, root.width * .4)
+            Layout.preferredWidth: Math.min(180, root.width * .45)
             implicitHeight: 26 * root.fs
             leftPadding: 8
             rightPadding: 8
@@ -46,7 +57,7 @@ ColumnLayout {
                 border.color: search.activeFocus ? root.accentColor : UI.Theme.line
                 radius: 5
             }
-            placeholderText: qsTr("Filter packages…")
+            placeholderText: root.searchPlaceholder
             font.pixelSize: 9 * root.fs
             selectByMouse: true
         }

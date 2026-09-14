@@ -106,6 +106,8 @@ Item {
                 }
             }
             PackageList {
+                objectName: "comparePackages"
+                searchPlaceholder: qsTr("Search apps / packages…")
                 Layout.fillWidth: true
                 visible: root.genA === root.genB || !!root.result
                 packages: root.result && root.genA !== root.genB ? root.result.diff || [] : []

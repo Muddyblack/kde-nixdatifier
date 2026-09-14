@@ -60,7 +60,7 @@ ComboBox {
         hoverEnabled: control.hoverEnabled
         text: control.labelAt(index)
         contentItem: Text {
-            text: parent.text
+            text: option.text
             textFormat: Text.PlainText
             color: control.colorAt(option.index)
             font: control.font
@@ -69,10 +69,12 @@ ComboBox {
         }
         background: Rectangle {
             radius: 4
-            color: parent.highlighted || parent.hovered ? Theme.wash(control.accentColor, .14) : "transparent"
+            color: option.highlighted || option.hovered ? Theme.wash(control.accentColor, .14) : "transparent"
         }
     }
     popup: Popup {
+        // Keep pointer focus on the panel surface while HyprlandFocusGrab is active.
+        popupType: Popup.Item
         y: control.height + 4
         width: control.width
         implicitHeight: Math.min(options.contentHeight + 8, 240 * control.fs)
