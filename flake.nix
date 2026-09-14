@@ -52,6 +52,8 @@
               ${pkgs.quickshell}/bin/qs --no-duplicate --path "$dest" "\$@"
               SCRIPT
               chmod +x "$out/bin/nixdatifier-hyprland"
+              wrapProgram "$out/bin/nixdatifier-hyprland" \
+                --prefix NIXPKGS_QT6_QML_IMPORT_PATH : "${pkgs.kdePackages.kirigami.unwrapped}/lib/qt-6/qml"
               runHook postInstall
             '';
             meta.mainProgram = "nixdatifier-hyprland";
