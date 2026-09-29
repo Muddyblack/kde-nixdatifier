@@ -256,7 +256,9 @@ Item {
             err: isError || false,
             id: Date.now()
         });
-        root.toasts = arr;
+        // Error toasts stay until dismissed; a recurring failure with varying
+        // text must not grow the list for the whole session.
+        root.toasts = arr.slice(-10);
         toastTimer.restart();
     }
 

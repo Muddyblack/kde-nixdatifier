@@ -17,11 +17,20 @@ Process {
         command = ["bash", "-c", cmd];
         running = true;
     }
-    onExited: (exitCode, exitStatus) => {
+    property bool _finished: false
+    function finish(out, err, exitCode) {
+        if (_finished)
+            return;
+        _finished = true;
         const cb = callback;
         callback = null;
         if (cb)
-            cb(sourceCommand, output.text, errors.text, exitCode);
+            cb(sourceCommand, out, err, exitCode);
         destroy();
     }
+    onExited: (exitCode, exitStatus) => finish(output.text, errors.text, exitCode)
+    // FailedToStart changes running without emitting exited; without this the
+    // job and its caller's busy flag would stay stuck forever.
+    onRunningChanged: if (!running && callback)
+        finish("", "Could not start bash", 127)
 }
