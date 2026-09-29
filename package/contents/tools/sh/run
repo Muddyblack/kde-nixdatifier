@@ -35,11 +35,21 @@ case "$mode" in
         if [[ -f "$result_file" ]]; then
             stamp=$(stat -c %Y "$result_file")
             now=$(date +%s)
-            if (( now-stamp < ttl || stamp >= requested )); then cat "$result_file"; exit 0; fi
+            if (( now-stamp < ttl || stamp >= requested )); then
+                # A partial flake check must retry the network, including when
+                # reading failed snapshots written by older widget versions.
+                if [[ "$scope" != flake:* ]] || ! grep -q $'\tunreachable\t' "$result_file"; then
+                    cat "$result_file"; exit 0
+                fi
+            fi
         fi
         temp=$(mktemp "$cache_root/.probe.XXXXXXXX")
         trap 'rm -f "$temp"' EXIT
         "$@" >"$temp"
+        if [[ "$scope" == flake:* ]] && grep -q $'\tunreachable\t' "$temp"; then
+            cat "$temp"
+            exit 0
+        fi
         mv "$temp" "$result_file"
         cat "$result_file"
         # Keys include lock fingerprints, closures, and diff contents, so old

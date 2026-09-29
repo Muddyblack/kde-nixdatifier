@@ -75,10 +75,34 @@ probe_one() {
         refs=("HEAD")
     fi
 
-    local remote_rev
-    remote_rev=$(timeout "$TIMEOUT" git \
-        ls-remote --quiet "$remote_url" "${refs[@]}" 2>/dev/null \
-        | awk 'NR==1 {print $1; exit}')
+    local remote_rev="" remote_output="" failure="" result=0
+    # Git's ref advertisement is expensive for repositories such as nixpkgs.
+    # Ask GitHub for just the target commit; retain Git for API rate limits,
+    # private repositories, and installations without curl.
+    if [[ "$type" == github ]] && command -v curl >/dev/null 2>&1; then
+        local encoded_ref
+        encoded_ref=$(jq -rn --arg ref "${ref:-HEAD}" '$ref | @uri')
+        remote_rev=$(curl --fail --silent --show-error --location \
+            --connect-timeout 5 --max-time 15 \
+            -H 'Accept: application/vnd.github.sha' \
+            "https://api.github.com/repos/${owner}/${repo}/commits/${encoded_ref}" 2>/dev/null) || remote_rev=""
+        [[ "$remote_rev" =~ ^[[:xdigit:]]{40}$ ]] || remote_rev=""
+    fi
+    if [[ -z "$remote_rev" ]]; then
+        remote_output=$(GIT_TERMINAL_PROMPT=0 timeout --kill-after=2s "$TIMEOUT" \
+            git -c protocol.version=2 ls-remote --quiet "$remote_url" "${refs[@]}" 2>&1) || result=$?
+        if (( result == 0 )); then
+            remote_rev=$(awk 'NR==1 {print $1}' <<< "$remote_output")
+            failure="Requested branch or tag was not found"
+        elif [[ "$remote_output" == *"Could not resolve host"* || "$remote_output" == *"Could not resolve hostname"* ]]; then
+            failure="DNS lookup failed"
+        elif (( result == 124 || result == 137 )); then
+            failure="Git request timed out after ${TIMEOUT}s"
+        else
+            failure="Git request failed (exit ${result})"
+        fi
+        [[ "$remote_rev" =~ ^[[:xdigit:]]{40}$ ]] || remote_rev=""
+    fi
 
     # Build the --override-input flake ref for the dry-run preview feature.
     local override_ref=""
@@ -95,7 +119,7 @@ probe_one() {
     esac
 
     if [ -z "$remote_rev" ]; then
-        printf '%s\t%s\t%s\t\t%s\t%s\t\n' "$name" "unreachable" "$rev" "$date" "$remote_url"
+        printf '%s\t%s\t%s\t\t%s\t%s\t\t%s\n' "$name" "unreachable" "$rev" "$date" "$remote_url" "$failure"
     elif [ "$remote_rev" = "$rev" ]; then
         printf '%s\t%s\t%s\t%s\t%s\t%s\t\n' "$name" "unchanged" "$rev" "$remote_rev" "$date" "$remote_url"
     else

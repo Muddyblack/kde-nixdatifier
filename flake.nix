@@ -18,7 +18,7 @@
       packages = forAllSystems (system:
         let
           pkgs = pkgsFor system;
-          runtime = with pkgs; [ bash nix jq git coreutils util-linux findutils gnugrep gnused gawk inotify-tools libnotify polkit ];
+          runtime = with pkgs; [ bash nix jq git curl coreutils util-linux findutils gnugrep gnused gawk inotify-tools libnotify polkit ];
           runtimePath = pkgs.lib.makeBinPath runtime;
           tray = pkgs.qt6.callPackage ./tray/package.nix { inherit version; };
         in
@@ -119,6 +119,8 @@
               # Let the wrapped viewer supply its matching Qt plugins instead
               # of inheriting a different version from the desktop session.
               unset QML2_IMPORT_PATH QML_IMPORT_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH NIXPKGS_QT6_QML_IMPORT_PATH
+              export NIXPKGS_QT6_QML_IMPORT_PATH=${pkgs.lib.makeSearchPath "lib/qt-6/qml" (with pkgs.kdePackages; [ plasma-desktop plasma-workspace kdeclarative kitemmodels ])}
+              export QT_STYLE_OVERRIDE=Fusion
               export XDG_DATA_DIRS=${pkgs.kdePackages.plasma-desktop}/share:${pkgs.kdePackages.plasma-sdk}/share:"''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
               exec plasmoidviewer \
                 -a "$PWD/package" -f "''${1:-planar}"

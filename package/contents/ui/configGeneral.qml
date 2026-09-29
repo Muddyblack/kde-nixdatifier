@@ -48,6 +48,48 @@ Kirigami.Page {
     property alias cfg_popupHeight: state.popupHeight
     property alias cfg_gcCustomCommand: state.gcCustomCommand
     property alias cfg_enableMotion: state.enableMotion
+    // Plasma injects defaults separately from the editable values.
+    Settings {
+        id: defaults
+    }
+    property alias cfg_flakePathDefault: defaults.flakePath
+    property alias cfg_configRepoPathDefault: defaults.configRepoPath
+    property alias cfg_checkIntervalDefault: defaults.checkInterval
+    property alias cfg_maxGenerationsDefault: defaults.maxGenerations
+    property alias cfg_defaultViewDefault: defaults.defaultView
+    property alias cfg_enableHostDetectDefault: defaults.enableHostDetect
+    property alias cfg_customCommandsDefault: defaults.customCommands
+    property alias cfg_showCommandButtonsDefault: defaults.showCommandButtons
+    property alias cfg_commandTerminalDefault: defaults.commandTerminal
+    property alias cfg_usePkexecDefault: defaults.usePkexec
+    property alias cfg_enableLiveSwitchDefault: defaults.enableLiveSwitch
+    property alias cfg_confirmBeforeRollbackDefault: defaults.confirmBeforeRollback
+    property alias cfg_confirmBeforeDeleteDefault: defaults.confirmBeforeDelete
+    property alias cfg_showDeleteButtonDefault: defaults.showDeleteButton
+    property alias cfg_showNotificationsDefault: defaults.showNotifications
+    property alias cfg_autoRefreshOnOpenDefault: defaults.autoRefreshOnOpen
+    property alias cfg_showFlakeSectionDefault: defaults.showFlakeSection
+    property alias cfg_secretsPathDefault: defaults.secretsPath
+    property alias cfg_secretsSourcePathDefault: defaults.secretsSourcePath
+    property alias cfg_diffFilterEnabledDefault: defaults.diffFilterEnabled
+    property alias cfg_timelineColorDefault: defaults.timelineColor
+    property alias cfg_accentColorDefault: defaults.accentColor
+    property alias cfg_fontScaleDefault: defaults.fontScale
+    property alias cfg_showBgDefault: defaults.showBg
+    property alias cfg_bgColorDefault: defaults.bgColor
+    property alias cfg_bgRadiusDefault: defaults.bgRadius
+    property alias cfg_useSystemTextColorDefault: defaults.useSystemTextColor
+    property alias cfg_customTextColorDefault: defaults.customTextColor
+    property alias cfg_enableGlowDefault: defaults.enableGlow
+    property alias cfg_iconStyleDefault: defaults.iconStyle
+    property alias cfg_diffViewModeDefault: defaults.diffViewMode
+    property alias cfg_showPackageIconsDefault: defaults.showPackageIcons
+    property alias cfg_compactStyleDefault: defaults.compactStyle
+    property alias cfg_compactShowBadgeDefault: defaults.compactShowBadge
+    property alias cfg_popupWidthDefault: defaults.popupWidth
+    property alias cfg_popupHeightDefault: defaults.popupHeight
+    property alias cfg_gcCustomCommandDefault: defaults.gcCustomCommand
+    property alias cfg_enableMotionDefault: defaults.enableMotion
     SettingsEditor {
         anchors.fill: parent
         settings: state

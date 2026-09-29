@@ -67,6 +67,72 @@ class Helpers(unittest.TestCase):
         self.assertEqual(result.returncode, 9)
         self.assertEqual(list((self.root / "cache/nixdatifier").glob("*.result")), [])
 
+    def test_homepages_are_parsed_as_one_batch(self):
+        names = [f"fixture-package-{n}" for n in range(200)]
+        payload = self.root / "homepages.json"
+        payload.write_text(json.dumps({n: f"https://example.org/{n}" for n in names}))
+        self.script(self.bin / "nix", f"cat '{payload}'\n")
+        self.script(self.bin / "find", "exit 0\n")
+        import shutil
+        real_jq = shutil.which("jq")
+        calls = self.root / "jq-calls"
+        self.script(self.bin / "jq", f"echo call >> '{calls}'; exec '{real_jq}' \"$@\"\n")
+        result = self.run_helper("meta", *names)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.splitlines(), [
+            f"{n}\thttps://example.org/{n}\tnixpkgs" for n in names
+        ])
+        self.assertEqual(len(calls.read_text().splitlines()), 2)
+
+    def test_partial_flake_check_retries_without_caching_failure(self):
+        counter = self.root / "probes"
+        helper = self.script(self.bin / "flake-probe", f"""
+if [[ ! -f '{counter}' ]]; then
+    touch '{counter}'
+    printf 'nixpkgs\\tunreachable\\told\\t\\t0\\turl\\n'
+else
+    printf 'nixpkgs\\tok\\told\\tnew\\t0\\turl\\n'
+fi
+""")
+        args = ("cached", "flake:test", "30", "--", helper)
+        first = self.run_helper("run", *args)
+        self.assertIn("\tunreachable\t", first.stdout)
+        self.assertEqual(list((self.root / "cache/nixdatifier").glob("*.result")), [])
+        second = self.run_helper("run", *args)
+        self.assertIn("\tok\t", second.stdout)
+        # Previously installed versions may have left failed cached results.
+        result_file = next((self.root / "cache/nixdatifier").glob("*.result"))
+        result_file.write_text(first.stdout)
+        self.assertIn("\tok\t", self.run_helper("run", *args).stdout)
+
+    def test_github_probe_uses_direct_commit_and_falls_back_to_git(self):
+        old, new = "a" * 40, "b" * 40
+        (self.root / "flake.lock").write_text(json.dumps({"nodes": {
+            "root": {"inputs": {"nixpkgs": "nixpkgs"}},
+            "nixpkgs": {"original": {"type": "github", "owner": "NixOS",
+                "repo": "nixpkgs", "ref": "branch/with-slash"},
+                "locked": {"rev": old, "lastModified": 1}}
+        }}))
+        args = self.root / "curl-args"
+        git_called = self.root / "git-called"
+        self.script(self.bin / "curl", f"printf '%s\\n' \"$@\" > '{args}'\nprintf '{new}'\n")
+        self.script(self.bin / "git", f"touch '{git_called}'; printf '{new}\\trefs/heads/test\\n'\n")
+        result = self.run_helper("flake-probe", str(self.root))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"\tok\t{old}\t{new}\t", result.stdout)
+        self.assertIn("/commits/branch%2Fwith-slash", args.read_text())
+        self.assertFalse(git_called.exists())
+        self.script(self.bin / "curl", "exit 22\n")
+        result = self.run_helper("flake-probe", str(self.root))
+        self.assertIn(f"\tok\t{old}\t{new}\t", result.stdout)
+        self.assertTrue(git_called.exists())
+        self.script(self.bin / "git", "exit 128\n")
+        self.assertIn("\tunreachable\t", self.run_helper("flake-probe", str(self.root)).stdout)
+        self.script(self.bin / "git", "echo 'Could not resolve host: github.com' >&2; exit 128\n")
+        self.assertIn("DNS lookup failed", self.run_helper("flake-probe", str(self.root)).stdout)
+        self.script(self.bin / "git", "exit 124\n")
+        self.assertIn("timed out after 40s", self.run_helper("flake-probe", str(self.root)).stdout)
+
     def test_change_counts_use_closure_direction_and_reuse_cache(self):
         args = self.root / "count-args"
         self.script(
@@ -212,7 +278,7 @@ class Helpers(unittest.TestCase):
                 {k: v for k, v in host.items() if k not in host_only}, xml, name
             )
         self.assertEqual(schema, set(xml))
-        self.assertEqual(aliases, set(xml))
+        self.assertEqual(aliases, set(xml) | {name + "Default" for name in xml})
 
     def test_flake_context_fingerprint_changes(self):
         flake = self.root / "flake directory"

@@ -111,12 +111,16 @@ done
 # of defence; this is the second.
 # Step 4 can only read this result through jq, so without jq the eval below is
 # pure waste — and it is not cheap waste: it instantiates all of nixpkgs.
+eval_names=()
+for p in "${unique[@]}"; do
+    [[ -n "${plasmoid_url[$p]:-}" ]] || eval_names+=("$p")
+done
 homepage_json=""
-if [ "${#unique[@]}" -gt 0 ] && command -v jq >/dev/null 2>&1; then
+if [ "${#eval_names[@]}" -gt 0 ] && command -v jq >/dev/null 2>&1; then
     names_file=$(mktemp -t meta-names.XXXXXX.json) || exit 0
     trap 'rm -f "$names_file"' EXIT
     # Build a JSON array of names (jq is already required for this step).
-    printf '%s\n' "${unique[@]}" | jq -Rnc '[inputs | select(length > 0)]' > "$names_file"
+    printf '%s\n' "${eval_names[@]}" | jq -Rnc '[inputs | select(length > 0)]' > "$names_file"
 
     # Look up homepage via top-level pkgs first; if missing, try kdePackages
     # and plasma5Packages (Plasma 6 split many KDE attrs under kdePackages).
@@ -147,6 +151,13 @@ fi
 declare -A resolved_url=()
 declare -A resolved_src=()
 pending=()
+# Parse the batch once instead of launching jq for each package in a large diff.
+declare -A homepage_urls=()
+if [[ -n "$homepage_json" ]]; then
+    while IFS=$'\t' read -r name url; do
+        [[ -n "$name" && -n "$url" ]] && homepage_urls["$name"]="$url"
+    done < <(printf '%s' "$homepage_json" | jq -r 'to_entries[] | select(.value != null and .value != "") | [.key, (.value | tostring)] | @tsv' 2>/dev/null)
+fi
 
 for p in "${unique[@]}"; do
     # Plasmoid match wins for user-built widgets — it points at the actual
@@ -158,7 +169,7 @@ for p in "${unique[@]}"; do
     fi
     # nixpkgs meta.homepage from the batched eval
     if [ -n "$homepage_json" ]; then
-        url=$(printf '%s' "$homepage_json" | jq -r --arg n "$p" '.[$n] // ""' 2>/dev/null)
+        url="${homepage_urls[$p]:-}"
         if [ -n "$url" ] && [ "$url" != "null" ]; then
             resolved_url["$p"]="$url"
             resolved_src["$p"]="nixpkgs"

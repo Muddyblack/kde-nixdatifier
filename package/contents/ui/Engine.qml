@@ -776,14 +776,21 @@ Item {
         });
     }
 
+    property var pendingIcons: ({})
+    property var pendingMeta: ({})
+
     function loadIcons(diffList) {
         if (!root.settings.showPackageIcons)
             return;
-        const unknown = diffList.map(d => d.name).filter(n => !(n in root.iconCache));
+        const unknown = [...new Set(diffList.map(d => d.name))].filter(n => n && !(n in root.iconCache) && !root.pendingIcons[n]).sort();
         if (unknown.length === 0)
             return;
+        unknown.forEach(n => root.pendingIcons[n] = true);
         const input = unknown.join("\n");
         sh("printf %s " + shq(input) + " | " + shq(root.scriptDir + "icons"), function (cmd, out, err, code) {
+            unknown.forEach(n => delete root.pendingIcons[n]);
+            if (code !== 0)
+                return;
             const updated = Object.assign({}, root.iconCache);
             (out || "").split("\n").forEach(line => {
                 const tab = line.indexOf("\t");
@@ -803,11 +810,15 @@ Item {
     // covers the whole diff (the eval is batched). Packages with no link found
     // are cached with source="" so we don't re-probe them.
     function loadMeta(diffList) {
-        const unknown = diffList.map(d => d.name).filter(n => n && !(n in root.metaCache));
+        const unknown = [...new Set(diffList.map(d => d.name))].filter(n => n && !(n in root.metaCache) && !root.pendingMeta[n]).sort();
         if (unknown.length === 0)
             return;
+        unknown.forEach(n => root.pendingMeta[n] = true);
         const input = unknown.join("\n");
         sh("printf %s " + shq(input) + " | " + shq(root.scriptDir + "run") + " cached " + shq("meta:" + Qt.md5(input)) + " 3600 -- " + shq(root.scriptDir + "meta"), function (cmd, out, err, code) {
+            unknown.forEach(n => delete root.pendingMeta[n]);
+            if (code !== 0)
+                return;
             const updated = Object.assign({}, root.metaCache);
             (out || "").split("\n").forEach(line => {
                 const parts = line.split("\t");
@@ -905,7 +916,7 @@ Item {
                 continue;
 
             if (status === "unreachable") {
-                unreachable.push(name);
+                unreachable.push(parts.length > 7 && parts[7] ? name + " (" + parts[7] + ")" : name);
                 continue;
             }
             if (status !== "ok")

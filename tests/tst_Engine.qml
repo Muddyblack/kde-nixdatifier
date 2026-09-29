@@ -94,6 +94,42 @@ Item {
                 url: "https://github.com/NixOS/nixpkgs"
             };
         }
+        function test_package_lookups_share_pending_work_and_retry_errors() {
+            cfg.showPackageIcons = true;
+            const packages = [
+                {
+                    name: "test-package"
+                },
+                {
+                    name: "test-package"
+                }
+            ];
+            core.loadIcons(packages);
+            core.loadIcons(packages);
+            core.loadMeta(packages);
+            core.loadMeta(packages);
+            compare(jobs.length, 2);
+            jobs[0].callback(jobs[0].cmd, "", "failed", 1);
+            jobs[1].callback(jobs[1].cmd, "", "failed", 1);
+            core.loadIcons(packages);
+            core.loadMeta(packages);
+            compare(jobs.length, 4);
+            jobs[2].callback(jobs[2].cmd, "test-package\tapp-icon", "", 0);
+            jobs[3].callback(jobs[3].cmd, "test-package\thttps://example.org\tnixpkgs", "", 0);
+            core.loadIcons(packages);
+            core.loadMeta(packages);
+            compare(jobs.length, 4);
+            compare(core.iconCache["test-package"], "app-icon");
+            compare(core.metaCache["test-package"].url, "https://example.org");
+            compare(Object.keys(core.pendingIcons).length, 0);
+            compare(Object.keys(core.pendingMeta).length, 0);
+            cfg.showPackageIcons = false;
+        }
+        function test_flake_failure_notice_includes_reason() {
+            core.parseFlakeProbe("nixpkgs\tunreachable\told\t\t0\turl\t\tDNS lookup failed", true, true);
+            compare(core.toasts.length, 1);
+            verify(core.toasts[0].msg.includes("nixpkgs (DNS lookup failed)"));
+        }
         function test_generation_counts_deduplicate_and_reject_stale_results() {
             core.activeViewMode = "timeline";
             core.generations = [
