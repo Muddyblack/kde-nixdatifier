@@ -1,290 +1,272 @@
+pragma ComponentBehavior: Bound
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Window
+import QtQuick.Controls.Basic as QQC
 import QtQuick.Layouts
 import "SettingsSchema.js" as Schema
-import "shared" as UI
 
-Pane {
+QQC.Pane {
     id: editor
-    padding: 0
-    background: null
-    palette.window: "#131923"
-    palette.windowText: UI.Theme.textColor
-    palette.base: "#1c2533"
-    palette.text: UI.Theme.textColor
-    palette.button: "#242f40"
-    palette.buttonText: UI.Theme.textColor
-    palette.highlight: UI.Theme.highlightColor
-    palette.highlightedText: "#131923"
-    palette.placeholderText: UI.Theme.muted
     required property var settings
     property bool hyprland: false
+    property bool infoOnlineEnabled: true
     property int currentTab: 0
-    readonly property var tabs: [qsTr("General"), qsTr("Commands"), qsTr("Behavior"), qsTr("Design")]
-    readonly property var tabKeys: ["General", "Commands", "Behavior", "Design"]
-    function setValue(key, value) {
-        settings[key] = value;
+    onCurrentTabChanged: {
+        if (scroll.contentItem)
+            scroll.contentItem.contentY = 0;
     }
-    function commandArray() {
-        try {
-            return JSON.parse(settings.customCommands || "[]");
-        } catch (e) {
-            return [];
+    property string query: ""
+    readonly property bool onScreen: visible && Window.window !== null && Window.window.visible
+    readonly property var tabs: [qsTr("General"), qsTr("Commands"), qsTr("Behavior"), qsTr("Design"), qsTr("Info")]
+    readonly property var tabKeys: ["General", "Commands", "Behavior", "Design", "Info"]
+    readonly property var tabIcons: ["settings", "terminal", "activate", "grid", "info"]
+    readonly property var descriptions: [qsTr("Connect your system flake and choose how generations are shown."), qsTr("Keep your rebuild commands and terminal preferences together."), qsTr("Choose how updates, generation actions and package details behave."), qsTr("Make the panel and popup feel at home on your desktop."), qsTr("Project information, releases and ways to contribute.")]
+    readonly property var placementFields: [
+        {
+            key: "pillMode",
+            tab: "Design",
+            group: "Hyprland panel",
+            label: qsTr("Panel visibility"),
+            type: "String",
+            choices: [
+                {
+                    label: qsTr("Always show pill"),
+                    value: "always"
+                },
+                {
+                    label: qsTr("Reveal at screen edge"),
+                    value: "hover"
+                },
+                {
+                    label: qsTr("Tray only"),
+                    value: "tray"
+                }
+            ]
+        },
+        {
+            key: "popupPosition",
+            tab: "Design",
+            group: "Hyprland panel",
+            label: qsTr("Popup position"),
+            type: "String",
+            choices: [
+                {
+                    label: qsTr("Top left"),
+                    value: "top-left"
+                },
+                {
+                    label: qsTr("Top center"),
+                    value: "top-center"
+                },
+                {
+                    label: qsTr("Top right"),
+                    value: "top-right"
+                },
+                {
+                    label: qsTr("Bottom left"),
+                    value: "bottom-left"
+                },
+                {
+                    label: qsTr("Bottom center"),
+                    value: "bottom-center"
+                },
+                {
+                    label: qsTr("Bottom right"),
+                    value: "bottom-right"
+                }
+            ]
+        },
+        {
+            key: "panelEdgeOffset",
+            tab: "Design",
+            group: "Hyprland panel",
+            label: qsTr("Edge inset (px)"),
+            type: "Int",
+            min: 0,
+            max: 16384
+        },
+        {
+            key: "panelSideOffset",
+            tab: "Design",
+            group: "Hyprland panel",
+            label: qsTr("Side inset (px)"),
+            help: qsTr("Drag the pill or adjust the insets to avoid other widgets."),
+            type: "Int",
+            min: 0,
+            max: 16384
         }
+    ]
+    readonly property var shownFields: {
+        if (!onScreen || currentTab === 4)
+            return [];
+        const search = query.trim().toLowerCase();
+        return Schema.fields.concat(hyprland ? placementFields : []).filter(f => search ? (f.label + " " + f.group + " " + (f.help || "")).toLowerCase().includes(search) : f.tab === tabKeys[currentTab]);
     }
-    function changeCommand(index, key, value) {
-        const list = commandArray();
-        list[index][key] = value;
-        settings.customCommands = JSON.stringify(list);
+    readonly property var groups: [...new Set(shownFields.map(f => f.group))]
+
+    padding: 18
+    palette.window: "#151718"
+    palette.windowText: "#eeefeb"
+    palette.base: "#0f1112"
+    palette.text: "#eeefeb"
+    palette.button: "#24282a"
+    palette.buttonText: "#eeefeb"
+    palette.highlight: "#91bcff"
+    palette.highlightedText: "#101b2c"
+    palette.placeholderText: "#787f82"
+    background: Rectangle {
+        color: "#151718"
+        radius: 14
+        border.color: "#10ffffff"
     }
+
     contentItem: ColumnLayout {
-        spacing: 12
+        spacing: 16
         RowLayout {
             Layout.fillWidth: true
-            Repeater {
-                model: editor.tabs
-                UI.ActionButton {
-                    required property string modelData
-                    required property int index
+            Image {
+                source: Qt.resolvedUrl("../../icon.png")
+                sourceSize: Qt.size(80, 80)
+                Layout.preferredWidth: 40
+                Layout.preferredHeight: 40
+            }
+            ColumnLayout {
+                Layout.fillWidth: true
+                spacing: 3
+                Text {
+                    text: qsTr("nixdatifier")
+                    color: "#eeefeb"
+                    font.pixelSize: 19
+                    font.weight: Font.DemiBold
+                }
+                Text {
                     Layout.fillWidth: true
-                    text: modelData
-                    primary: editor.currentTab === index
-                    onClicked: editor.currentTab = index
+                    text: editor.descriptions[editor.currentTab]
+                    color: "#9da3a5"
+                    font.pixelSize: 11
+                    wrapMode: Text.WordWrap
                 }
             }
         }
-        ScrollView {
+        Flow {
+            Layout.fillWidth: true
+            spacing: 6
+            Repeater {
+                model: editor.tabs
+                QQC.Button {
+                    id: tabButton
+                    required property string modelData
+                    required property int index
+                    text: modelData
+                    objectName: "settingsTab_" + editor.tabKeys[index]
+                    implicitHeight: 34
+                    implicitWidth: tabContent.implicitWidth + 20
+                    padding: 10
+                    onClicked: {
+                        editor.query = "";
+                        search.text = "";
+                        editor.currentTab = index;
+                    }
+                    contentItem: RowLayout {
+                        id: tabContent
+                        spacing: 6
+                        Image {
+                            source: Qt.resolvedUrl("assets/ic_" + editor.tabIcons[tabButton.index] + ".svg")
+                            sourceSize: Qt.size(28, 28)
+                            Layout.preferredWidth: 14
+                            Layout.preferredHeight: 14
+                            opacity: editor.currentTab === tabButton.index ? 1 : 0.65
+                        }
+                        Text {
+                            text: tabButton.text
+                            color: editor.currentTab === tabButton.index ? "#c6dcff" : "#9da3a5"
+                            font.pixelSize: 11
+                        }
+                    }
+                    background: Rectangle {
+                        radius: 8
+                        color: editor.currentTab === tabButton.index ? "#22344b" : tabButton.hovered ? "#08ffffff" : "transparent"
+                        border.color: tabButton.activeFocus ? "#91bcff" : editor.currentTab === tabButton.index ? "#5091bcff" : "#10ffffff"
+                    }
+                }
+            }
+        }
+        SettingsTextField {
+            id: search
+            Layout.fillWidth: true
+            visible: editor.currentTab !== 4
+            placeholderText: qsTr("Search settings…")
+            selectByMouse: true
+            Accessible.name: qsTr("Search settings")
+            onTextChanged: editor.query = text
+        }
+        QQC.ScrollView {
             id: scroll
             Layout.fillWidth: true
             Layout.fillHeight: true
-            clip: true
             contentWidth: availableWidth
-            ColumnLayout {
+            clip: true
+            Column {
                 width: scroll.availableWidth
-                spacing: 13
+                spacing: 18
                 Repeater {
-                    model: Schema.fields.filter(f => f.tab === editor.tabKeys[editor.currentTab])
-                    ColumnLayout {
-                        id: field
-                        required property var modelData
-                        required property int index
-                        Layout.fillWidth: true
-                        spacing: 6
-                        readonly property var value: editor.settings[modelData.key]
-                        readonly property bool groupStart: index === 0 || Schema.fields.filter(f => f.tab === editor.tabKeys[editor.currentTab])[index - 1].group !== modelData.group
+                    model: editor.groups
+                    Column {
+                        id: group
+                        required property string modelData
+                        readonly property var fields: editor.shownFields.filter(f => f.group === modelData)
+                        width: parent.width
+                        spacing: 8
                         Text {
-                            visible: field.groupStart
-                            Layout.topMargin: field.index ? 12 : 0
-                            text: field.modelData.group
-                            color: UI.Theme.highlightColor
-                            font: UI.Theme.defaultFont
+                            text: group.modelData.toUpperCase()
+                            color: "#b1b7b9"
+                            font.pixelSize: 10
+                            font.weight: Font.DemiBold
+                            font.letterSpacing: 1.2
                         }
-                        CheckBox {
-                            visible: field.modelData.type === "Bool"
-                            Layout.fillWidth: true
-                            text: field.modelData.label
-                            checked: !!field.value
-                            onToggled: editor.setValue(field.modelData.key, checked)
-                        }
-                        Text {
-                            visible: field.modelData.type !== "Bool"
-                            text: field.modelData.label
-                            color: UI.Theme.textColor
-                            font: UI.Theme.smallFont
-                        }
-                        TextField {
-                            visible: !field.modelData.choices && (field.modelData.type === "String" || field.modelData.type === "Color") && field.modelData.key !== "customCommands"
-                            Layout.fillWidth: true
-                            text: String(field.value)
-                            selectByMouse: true
-                            onEditingFinished: {
-                                if ((field.modelData.type === "Color" || field.modelData.key === "bgColor") && !/^#(?:[a-fA-F0-9]{6}|[a-fA-F0-9]{8})$/.test(text)) {
-                                    text = String(field.value);
-                                    return;
-                                }
-                                editor.setValue(field.modelData.key, text);
-                            }
-                        }
-                        ComboBox {
-                            visible: !!field.modelData.choices
-                            Layout.fillWidth: true
-                            textRole: "label"
-                            valueRole: "value"
-                            model: field.modelData.choices || []
-                            currentIndex: model.findIndex(c => c.value === field.value)
-                            onActivated: editor.setValue(field.modelData.key, currentValue)
-                        }
-                        SpinBox {
-                            visible: field.modelData.type === "Int"
-                            editable: true
-                            from: field.modelData.min || 0
-                            to: field.modelData.max || 100000
-                            value: field.modelData.type === "Int" ? Number(field.value) : 0
-                            onValueModified: editor.setValue(field.modelData.key, value)
-                        }
-                        RowLayout {
-                            visible: field.modelData.type === "Double"
-                            Layout.fillWidth: true
-                            Slider {
-                                Layout.fillWidth: true
-                                from: field.modelData.min || 0
-                                to: field.modelData.max || 2
-                                value: field.modelData.type === "Double" ? Number(field.value) : 0
-                                stepSize: field.modelData.key === "fontScale" ? .05 : 1
-                                onMoved: editor.setValue(field.modelData.key, value)
-                            }
-                            Text {
-                                text: field.modelData.type === "Double" ? Number(field.value).toFixed(2) : ""
-                                color: UI.Theme.textColor
-                                font: UI.Theme.smallFont
-                            }
-                        }
-                        ColumnLayout {
-                            visible: field.modelData.key === "customCommands"
-                            Layout.fillWidth: true
-                            Repeater {
-                                model: field.modelData.key === "customCommands" ? editor.commandArray() : []
-                                ColumnLayout {
-                                    id: cmdRow
-                                    required property var modelData
-                                    required property int index
-                                    Layout.fillWidth: true
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        TextField {
-                                            Layout.fillWidth: true
-                                            text: cmdRow.modelData.label
-                                            placeholderText: qsTr("Button label")
-                                            onEditingFinished: if (text !== cmdRow.modelData.label)
-                                                editor.changeCommand(cmdRow.index, "label", text)
-                                        }
-                                        UI.ActionButton {
-                                            text: "×"
-                                            tip: qsTr("Remove command")
-                                            onClicked: {
-                                                const list = editor.commandArray();
-                                                list.splice(cmdRow.index, 1);
-                                                editor.settings.customCommands = JSON.stringify(list);
-                                            }
-                                        }
-                                    }
-                                    TextField {
-                                        Layout.fillWidth: true
-                                        text: cmdRow.modelData.cmd
-                                        placeholderText: qsTr("Command, e.g. upnix")
-                                        onEditingFinished: if (text !== cmdRow.modelData.cmd)
-                                            editor.changeCommand(cmdRow.index, "cmd", text)
+                        Rectangle {
+                            width: parent.width
+                            height: rows.implicitHeight + 4
+                            radius: 14
+                            color: "#04ffffff"
+                            border.color: "#10ffffff"
+                            Column {
+                                id: rows
+                                x: 14
+                                y: 2
+                                width: parent.width - 28
+                                Repeater {
+                                    model: group.fields
+                                    SettingsField {
+                                        required property var modelData
+                                        required property int index
+                                        width: rows.width
+                                        height: implicitHeight
+                                        field: modelData
+                                        settings: editor.settings
+                                        first: index === 0
+                                        enabled: modelData.key !== "panelSideOffset" || !String(editor.settings.popupPosition).endsWith("center")
+                                        opacity: enabled ? 1 : 0.45
                                     }
                                 }
                             }
-                            UI.ActionButton {
-                                text: qsTr("Add command")
-                                enabled: editor.commandArray().length < 4
-                                onClicked: {
-                                    const list = editor.commandArray();
-                                    list.push({
-                                        label: "",
-                                        cmd: "",
-                                        color: "accent"
-                                    });
-                                    editor.settings.customCommands = JSON.stringify(list);
-                                }
-                            }
-                        }
-                        Text {
-                            visible: field.modelData.help !== ""
-                            Layout.fillWidth: true
-                            text: field.modelData.help
-                            wrapMode: Text.WordWrap
-                            color: UI.Theme.muted
-                            font: UI.Theme.smallFont
                         }
                     }
                 }
-                ColumnLayout {
-                    visible: editor.hyprland && editor.currentTab === 3
-                    Layout.fillWidth: true
-                    Text {
-                        text: qsTr("Hyprland panel")
-                        color: UI.Theme.highlightColor
-                        font: UI.Theme.defaultFont
-                    }
-                    ComboBox {
-                        Layout.fillWidth: true
-                        model: [
-                            {
-                                label: qsTr("Always show pill"),
-                                value: "always"
-                            },
-                            {
-                                label: qsTr("Reveal at screen edge"),
-                                value: "hover"
-                            },
-                            {
-                                label: qsTr("Tray only"),
-                                value: "tray"
-                            }
-                        ]
-                        textRole: "label"
-                        valueRole: "value"
-                        currentIndex: model.findIndex(c => c.value === editor.settings.pillMode)
-                        onActivated: editor.settings.pillMode = currentValue
-                    }
-                    ComboBox {
-                        Layout.fillWidth: true
-                        model: ["top-left", "top-center", "top-right", "bottom-left", "bottom-center", "bottom-right"]
-                        currentIndex: Math.max(0, model.indexOf(editor.settings.popupPosition))
-                        onActivated: editor.settings.popupPosition = currentText
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: qsTr("Edge inset")
-                            color: UI.Theme.textColor
-                            Layout.fillWidth: true
-                        }
-                        SpinBox {
-                            from: 0
-                            to: 16384
-                            stepSize: 4
-                            editable: true
-                            value: editor.settings.panelEdgeOffset
-                            onValueModified: editor.settings.panelEdgeOffset = value
-                            Accessible.name: qsTr("Edge inset in pixels")
-                        }
-                        Text {
-                            text: qsTr("px")
-                            color: UI.Theme.muted
-                        }
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Text {
-                            text: qsTr("Side inset")
-                            color: UI.Theme.textColor
-                            Layout.fillWidth: true
-                        }
-                        SpinBox {
-                            from: 0
-                            to: 16384
-                            stepSize: 4
-                            editable: true
-                            enabled: !editor.settings.popupPosition.endsWith("center")
-                            value: editor.settings.panelSideOffset
-                            onValueModified: editor.settings.panelSideOffset = value
-                            Accessible.name: qsTr("Side inset in pixels")
-                        }
-                        Text {
-                            text: qsTr("px")
-                            color: UI.Theme.muted
-                        }
-                    }
-                    Text {
-                        Layout.fillWidth: true
-                        text: qsTr("Drag the pill to reposition it, or adjust the insets to avoid other widgets.")
-                        wrapMode: Text.WordWrap
-                        color: UI.Theme.muted
-                        font: UI.Theme.smallFont
+                Text {
+                    visible: editor.currentTab !== 4 && editor.groups.length === 0
+                    text: qsTr("No matching settings")
+                    color: "#9da3a5"
+                    font.pixelSize: 12
+                }
+                Loader {
+                    id: infoLoader
+                    objectName: "projectInfoLoader"
+                    width: parent.width
+                    active: editor.onScreen && editor.currentTab === 4
+                    sourceComponent: ProjectInfoPane {
+                        showBranding: false
+                        onlineEnabled: editor.infoOnlineEnabled
                     }
                 }
             }

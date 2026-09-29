@@ -380,11 +380,6 @@ ShellRoot {
                     anchors.fill: parent
                     anchors.margins: 18
                     spacing: 14
-                    Text {
-                        text: qsTr("Nixdatifier settings")
-                        color: UI.Theme.textColor
-                        font.pixelSize: 20
-                    }
                     App.SettingsEditor {
                         id: settingsEditor
                         Layout.fillWidth: true

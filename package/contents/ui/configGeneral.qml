@@ -1,8 +1,10 @@
 import QtQuick
-import QtQuick.Layouts
+import org.kde.kirigami as Kirigami
 
-Item {
+Kirigami.Page {
     id: configRoot
+    padding: 0
+    globalToolBarStyle: Kirigami.ApplicationHeaderStyle.None
     implicitWidth: 620
     implicitHeight: 620
     Settings {

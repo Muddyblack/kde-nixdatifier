@@ -148,6 +148,7 @@ flowchart TD
 
 The widget does as little as possible while you are not looking at it:
 
+- **Settings do not poll while idle.** Info wakes only for a pending request timeout, retry, or refresh cooldown. Once loaded, its timer stops. Closing settings destroys the Info pane, aborts its requests, and releases their callbacks.
 - **No expensive background timers.** Measuring the store (`du -sb /nix/store`, plus `nix-store --gc --print-dead` for the reclaimable size) walks the whole store, so it runs only while the popup is open, at most every 30 minutes, never twice at once, and at `nice -n 19` / idle I/O priority.
 - **Animations stop when the popup closes.** Every looping animation is tied to whether the popup is on screen, so a closed popup does not keep the render loop awake.
 - **The flake cache watch cannot spin.** Cross-instance sync waits on `inotifywait`. If that is missing or unusable, the widget falls back to a slow poll instead of respawning the watch in a tight loop.
@@ -242,6 +243,11 @@ make pack
 ## Configuration
 
 Everything is in the widget's right-click → *Configure* menu (on Hyprland, the ⚙ button in the popup).
+
+Settings use grouped cards with a search across all settings and stacked controls in narrow windows.
+The **Info** tab shows the installed and latest release, GitHub stars and downloads,
+KDE Store downloads, license, contributors, and support links. Its requests and timer
+stop when settings close; the Info pane is released when hidden or another tab opens.
 
 ### General
 
