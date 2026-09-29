@@ -1007,7 +1007,9 @@ Item {
         const epoch = root.flakeEpoch;
         const revisionKey = root.flakeUpdates.find(u => u.input === inputName).revisionKey;
 
-        sh(shq(root.scriptDir + "run") + " cached " + shq("preview:" + root.flakePath + ":" + root.lockFingerprint) + " 300 -- " + shq(root.scriptDir + "dry-run-preview") + " " + shq(root.flakePath) + " " + shq(inputName) + " " + shq(overrideRef) + " " + shq(root.settings.enableHostDetect ? "auto" : "single"), function (cmd, out, err, code) {
+        // Bound the entire read-only operation, including waiting for a cache
+        // lock and downloading/evaluating an overridden input.
+        sh("timeout --kill-after=5s 180s " + shq(root.scriptDir + "run") + " cached " + shq("preview:" + root.flakePath + ":" + root.lockFingerprint) + " 300 -- " + shq(root.scriptDir + "dry-run-preview") + " " + shq(root.flakePath) + " " + shq(inputName) + " " + shq(overrideRef) + " " + shq(root.settings.enableHostDetect ? "auto" : "single"), function (cmd, out, err, code) {
             root.isDryRunning = false;
             if (epoch !== root.flakeEpoch || !root.flakeUpdates.some(u => u.input === inputName && u.revisionKey === revisionKey && u.overrideRef === overrideRef))
                 return;
@@ -1018,7 +1020,7 @@ Item {
                 updated[inputName] = {
                     status: "error",
                     packages: [],
-                    errorMsg: (text || err || qsTr("Preview failed")).replace(/^ERROR:\s*/, "")
+                    errorMsg: code === 124 || code === 137 ? qsTr("Preview timed out after 3 minutes. Check your connection and try again.") : (text || err || qsTr("Preview failed")).replace(/^ERROR:\s*/, "")
                 };
                 root.dryRunCache = updated;
                 return;

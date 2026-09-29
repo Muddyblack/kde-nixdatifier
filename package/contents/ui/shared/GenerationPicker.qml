@@ -1,5 +1,5 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 
 ComboBox {
     id: control
@@ -83,7 +83,7 @@ ComboBox {
         contentItem: ListView {
             id: options
             clip: true
-            model: control.delegateModel
+            model: control.popup.visible ? control.delegateModel : null
             currentIndex: control.highlightedIndex
             highlightMoveDuration: 0
             ScrollBar.vertical: ScrollBar {}

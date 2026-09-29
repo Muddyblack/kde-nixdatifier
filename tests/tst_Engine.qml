@@ -206,6 +206,23 @@ Item {
             verify(updates.openPreviews.nixpkgs);
             compare(jobs.length, 0);
         }
+        function test_preview_timeout_clears_busy_state_and_allows_retry() {
+            const input = fixtureInput();
+            core.flakeUpdates = [input];
+            core.runDryPreview(input.input, input.overrideRef);
+            compare(jobs.length, 1);
+            verify(jobs[0].cmd.startsWith("timeout --kill-after=5s 180s "));
+            jobs[0].callback(jobs[0].cmd, "", "", 124);
+            verify(!core.isDryRunning);
+            verify(!core.isSpinning);
+            compare(core.dryRunCache[input.input].status, "error");
+            verify(core.dryRunCache[input.input].errorMsg.includes("timed out"));
+            core.runDryPreview(input.input, input.overrideRef);
+            compare(jobs.length, 2);
+            jobs[1].callback(jobs[1].cmd, "OK: already up to date", "", 0);
+            compare(core.dryRunCache[input.input].status, "ok");
+        }
+
         function test_stale_preview_is_not_applied() {
             const input = fixtureInput();
             core.flakeUpdates = [input];

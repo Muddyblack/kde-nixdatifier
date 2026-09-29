@@ -116,6 +116,10 @@
             type = "app";
             program = toString (pkgs.writeShellScript "view" ''
               export PATH=${pkgs.lib.makeBinPath [ pkgs.kdePackages.plasma-sdk ]}:"$PATH"
+              # Let the wrapped viewer supply its matching Qt plugins instead
+              # of inheriting a different version from the desktop session.
+              unset QML2_IMPORT_PATH QML_IMPORT_PATH QT_PLUGIN_PATH QT_QPA_PLATFORM_PLUGIN_PATH NIXPKGS_QT6_QML_IMPORT_PATH
+              export XDG_DATA_DIRS=${pkgs.kdePackages.plasma-desktop}/share:${pkgs.kdePackages.plasma-sdk}/share:"''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
               exec plasmoidviewer \
                 -a "$PWD/package" -f "''${1:-planar}"
             '');

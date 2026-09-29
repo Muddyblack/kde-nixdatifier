@@ -5,9 +5,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMenu>
-#include <QPainter>
+#include <QElapsedTimer>
 #include <QProcess>
-#include <QSvgRenderer>
+#include "TrayIconRenderer.h"
 #include <QSystemTrayIcon>
 #include <QTimer>
 
@@ -20,8 +20,8 @@ int main(int argc, char **argv) {
     const QString qs = QString::fromLocal8Bit(argv[1]);
     const QString config = QString::fromLocal8Bit(argv[2]);
     const QString statusPath = QString::fromLocal8Bit(argv[3]);
-    QSvgRenderer logo(QString::fromLocal8Bit(argv[4]));
-    if (!logo.isValid()) return 2;
+    TrayIconRenderer icons(QString::fromLocal8Bit(argv[4]));
+    if (!icons.isValid()) return 2;
     QSystemTrayIcon tray;
     QMenu menu;
     auto call = [&](const QString &action) {
@@ -43,46 +43,54 @@ int main(int argc, char **argv) {
                          if (reason == QSystemTrayIcon::Trigger) call("toggle");
                      });
     QJsonObject state;
-    int angle = 0;
+    QElapsedTimer elapsed;
+    int lastFrame = -1;
     QTimer animation;
-    animation.setInterval(60);
-    auto paint = [&] {
-        QPixmap glyph(64,64); glyph.fill(Qt::transparent);
-        { QPainter p(&glyph); p.setRenderHint(QPainter::Antialiasing); logo.render(&p, QRectF(5,5,54,54));
-          const QString style = state.value("iconStyle").toString("colored");
-          if (style != "colored") {
-              p.setCompositionMode(QPainter::CompositionMode_SourceIn);
-              p.fillRect(glyph.rect(), style == "white" ? QColor("white") : style == "black" ? QColor("black") : QColor(state.value("accent").toString("#91bcff")));
-          }
-        }
-        QPixmap pix(64,64); pix.fill(Qt::transparent);
-        QPainter p(&pix); p.setRenderHint(QPainter::Antialiasing);
-        p.translate(32,32); p.rotate(angle); p.drawPixmap(-32,-32,glyph); p.resetTransform();
-        const int updates=state.value("updates").toInt();
-        if (updates>0) {
-            p.setPen(Qt::NoPen); p.setBrush(QColor("#91bcff")); p.drawEllipse(QRectF(36,0,28,28));
-            p.setPen(QColor("#131923")); QFont f=p.font(); f.setPixelSize(17); f.setBold(true); p.setFont(f);
-            p.drawText(QRect(36,0,28,28),Qt::AlignCenter,updates>99 ? "99+" : QString::number(updates));
-        }
-        p.end(); tray.setIcon(QIcon(pix));
+    animation.setInterval(TrayIconRenderer::FrameInterval);
+    animation.setTimerType(Qt::PreciseTimer);
+    auto paint = [&](bool force = false) {
+        const int frame = animation.isActive()
+            ? (elapsed.elapsed() / TrayIconRenderer::FrameInterval) % TrayIconRenderer::FrameCount : 0;
+        if (!force && frame == lastFrame) return;
+        tray.setIcon(icons.frame(frame));
+        lastFrame = frame;
     };
-    QObject::connect(&animation, &QTimer::timeout, &app, [&] { angle=(angle+12)%360; paint(); });
+    QObject::connect(&animation, &QTimer::timeout, &app, [&] { paint(); });
     QFileSystemWatcher watch;
     auto reload = [&] {
-        QFile file(statusPath);
-        if (file.open(QIODevice::ReadOnly)) {
-            const auto document=QJsonDocument::fromJson(file.readAll());
-            if (document.isObject()) state=document.object();
-        }
+        // Atomic file replacement can produce both directory and file events.
+        // Reattach the watch even if the JSON has not changed.
         if (!watch.files().contains(statusPath) && QFileInfo::exists(statusPath)) watch.addPath(statusPath);
-        tray.setToolTip(state.value("summary").toString("Nixdatifier"));
-        if (state.value("working").toBool() && state.value("motion").toBool(true)) animation.start();
-        else { animation.stop(); angle=0; }
-        paint();
+        QFile file(statusPath);
+        if (!file.open(QIODevice::ReadOnly)) return;
+        const auto document = QJsonDocument::fromJson(file.readAll());
+        if (!document.isObject() || document.object() == state) return;
+        const auto next = document.object();
+        if (next.value("summary") != state.value("summary"))
+            tray.setToolTip(next.value("summary").toString("Nixdatifier"));
+        state = next;
+        QColor accent(state.value("accent").toString("#91bcff"));
+        if (!accent.isValid()) accent = QColor("#91bcff");
+        const bool appearanceChanged = icons.setAppearance(state.value("iconStyle").toString("colored"),
+                                                           accent, state.value("updates").toInt());
+        const bool working = state.value("working").toBool() && state.value("motion").toBool(true);
+        if (working && !animation.isActive()) {
+            elapsed.start();
+            animation.start();
+        } else if (!working && animation.isActive()) {
+            animation.stop();
+            elapsed.invalidate();
+        }
+        paint(appearanceChanged);
+        if (!working) icons.releaseAnimationFrames();
     };
+    icons.setAppearance("colored", QColor("#91bcff"), 0);
+    tray.setToolTip("Nixdatifier");
+    paint();
     watch.addPath(QFileInfo(statusPath).absolutePath());
-    QObject::connect(&watch,&QFileSystemWatcher::directoryChanged,&app,reload);
-    QObject::connect(&watch,&QFileSystemWatcher::fileChanged,&app,reload);
-    reload(); tray.show();
+    QObject::connect(&watch, &QFileSystemWatcher::directoryChanged, &app, reload);
+    QObject::connect(&watch, &QFileSystemWatcher::fileChanged, &app, reload);
+    reload();
+    tray.show();
     return app.exec();
 }

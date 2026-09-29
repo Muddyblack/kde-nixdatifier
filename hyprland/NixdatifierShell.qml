@@ -136,7 +136,7 @@ ShellRoot {
         atomicWrites: true
         printErrors: false
         onAdapterUpdated: if (!root.smokeTest)
-            writeAdapter()
+            statusWriteTimer.restart()
         JsonAdapter {
             property bool working: core.isSpinning
             property bool motion: cfg.enableMotion
@@ -145,6 +145,12 @@ ShellRoot {
             property string summary: core.toolTipMainText + "\n" + core.toolTipSubText
             property int updates: cfg.compactShowBadge ? core.flakeUpdates.length : 0
         }
+    }
+    Timer {
+        id: statusWriteTimer
+        interval: 0
+        repeat: false
+        onTriggered: statusFile.writeAdapter()
     }
     IpcHandler {
         target: "panel"
