@@ -73,6 +73,7 @@ Pane {
     required property string lastActivationTime
     required property string uptime
     required property string iconStyle
+    required property bool isNixOS
     required property real diskStoreBytes
     required property real diskReclaimableBytes
     required property real diskFreeBytes
@@ -184,7 +185,7 @@ Pane {
         {
             key: "health",
             label: qsTr("System health"),
-            hint: qsTr("Reboots, /boot space, caches and failed units."),
+            hint: fullView.isNixOS ? qsTr("Reboots, /boot space, caches and failed units.") : qsTr("Nix, profiles, caches and failed units."),
             glyph: "ic_check"
         },
         {
@@ -217,13 +218,15 @@ Pane {
             hint: qsTr("See why a store path can't be collected."),
             glyph: "ic_search"
         }
-    ]
+    ].filter(tool => fullView.isNixOS || tool.key !== "secrets")
     readonly property var activeTool: tools.find(t => t.key === activeViewMode) || null
     readonly property bool inTools: activeViewMode === "tools" || activeTool !== null
     readonly property bool toolsOverlayOpen: inTools && activeViewMode !== "tools"
 
     readonly property real contentMargin: width < 440 ? 16 : 21
     readonly property string releaseLabel: {
+        if (!fullView.isNixOS)
+            return fullView.nixosVersion ? "Nix " + fullView.nixosVersion : "Nix";
         const match = nixosVersion.match(/^\d{2}\.\d{2}/);
         return nixosVersion ? "NixOS " + (match ? match[0] : nixosVersion) : "NixOS";
     }
@@ -361,12 +364,14 @@ Pane {
                             MenuItem {
                                 text: qsTr("Refresh generations list")
                                 enabled: !fullView.isLoadingGens
+                                visible: fullView.isNixOS
+                                height: visible ? implicitHeight : 0
                                 onTriggered: fullView.refreshRequested()
                             }
                             MenuItem {
                                 text: qsTr("Check flake for updates")
                                 enabled: !fullView.isCheckingFlake
-                                visible: fullView.showFlakeSection
+                                visible: fullView.isNixOS && fullView.showFlakeSection
                                 height: visible ? implicitHeight : 0
                                 onTriggered: fullView.checkFlakeRequested()
                             }
@@ -376,6 +381,8 @@ Pane {
                             }
                             MenuItem {
                                 text: qsTr("Clean up Nix store…")
+                                visible: fullView.isNixOS
+                                height: visible ? implicitHeight : 0
                                 onTriggered: cleanupMenu.open()
                             }
                             MenuSeparator {}
@@ -529,22 +536,26 @@ Pane {
                                 {
                                     key: "timeline",
                                     label: qsTr("Generations"),
-                                    glyph: "ic_history"
+                                    glyph: "ic_history",
+                                    nixosOnly: true
                                 },
                                 {
                                     key: "updates",
                                     label: qsTr("Updates"),
-                                    glyph: "ic_outline_updates"
+                                    glyph: "ic_outline_updates",
+                                    nixosOnly: true
                                 },
                                 {
                                     key: "diff",
                                     label: qsTr("Compare"),
-                                    glyph: "ic_outline_compare"
+                                    glyph: "ic_outline_compare",
+                                    nixosOnly: true
                                 },
                                 {
                                     key: "tools",
                                     label: qsTr("Tools"),
-                                    glyph: "ic_grid"
+                                    glyph: "ic_grid",
+                                    nixosOnly: false
                                 }
                             ]
                             UI.NavigationTab {
@@ -558,6 +569,8 @@ Pane {
                                 scaleFactor: fullView.fs
                                 showIcon: fullView.width >= 440
                                 onClicked: fullView.viewModeChanged(modelData.key)
+                                visible: !modelData.nixosOnly || fullView.isNixOS
+                                width: visible ? implicitWidth : 0
                             }
                         }
                     }
@@ -808,6 +821,8 @@ Pane {
                     }
                     UI.ActionButton {
                         Layout.topMargin: 13
+                        visible: fullView.isNixOS
+                        height: visible ? implicitHeight : 0
                         text: qsTr("Clean up old generations…")
                         glyph: fullView.svg("ic_delete")
                         font.pixelSize: 10 * fullView.fs
@@ -930,7 +945,7 @@ Pane {
                 UI.ActionButton {
                     id: commandsButton
                     objectName: "commandsButton"
-                    visible: fullView.showCommandButtons
+                    visible: fullView.isNixOS && fullView.showCommandButtons
                     text: qsTr("Commands ›")
                     glyph: "utilities-terminal"
                     flatStyle: true

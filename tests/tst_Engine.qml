@@ -48,8 +48,13 @@ Item {
         name: "SharedEngine"
         when: windowShown
         function init() {
+            core.isNixOS = true;
+            core.systemDetected = true;
             jobs = [];
             core.isBusy = false;
+            core.isLoadingHistory = false;
+            core.isLoadingGens = false;
+            core.isLoadingSecrets = false;
             core.activeJobs = 0;
             core.isLoadingPairDiff = false;
             core.isLoadingDetails = false;
@@ -83,6 +88,55 @@ Item {
             ];
             core.activeGenNum = 661;
             core.bootedGenNum = 660;
+        }
+        function test_non_nixos_startup_and_guards() {
+            core.isNixOS = false;
+            core.systemDetected = false;
+            core.activeViewMode = "tools";
+            core.start();
+            compare(jobs.length, 2); // sysinfo and history only
+            verify(jobs[0].cmd.indexOf("/sysinfo'") >= 0);
+            jobs[0].callback(jobs[0].cmd, "ubuntu--- ---1h--- --- ---0", "", 0);
+            compare(core.isNixOS, false);
+            compare(core.systemDetected, true);
+            compare(core.activeViewMode, "tools");
+            compare(jobs.length, 2);
+            core.refreshGenerations();
+            core.probeSecrets();
+            core.refreshFlakeContext();
+            core.checkFlakeUpdates();
+            core.executeAction(661, "delete");
+            core.executeCleanup("gc-all");
+            core.runDryPreview("nixpkgs", "");
+            core.runCustomCommand("nixos-rebuild switch", "Rebuild");
+            compare(jobs.length, 2);
+            core.activeViewMode = "health";
+            core.parseSysInfo("ubuntu--- ---2h--- --- ---0");
+            compare(core.activeViewMode, "health");
+        }
+        function test_nixos_startup_waits_for_detection() {
+            core.isNixOS = false;
+            core.systemDetected = false;
+            core.start();
+            compare(jobs.length, 2);
+            jobs[0].callback(jobs[0].cmd, "host---26.05---1h---today--- ---1", "", 0);
+            compare(core.isNixOS, true);
+            compare(core.activeViewMode, cfg.defaultView || "timeline");
+            verify(jobs.some(j => j.cmd.indexOf("/generations'") >= 0));
+            verify(jobs.some(j => j.cmd.indexOf("/secrets'") >= 0));
+            verify(jobs.some(j => j.cmd.indexOf("/flake-context'") >= 0));
+            core.isLoadingGens = false;
+            core.isLoadingSecrets = false;
+        }
+        function test_failed_detection_keeps_system_actions_disabled() {
+            core.isNixOS = false;
+            core.systemDetected = false;
+            core.start();
+            jobs[0].callback(jobs[0].cmd, "", "failed", 1);
+            compare(core.isNixOS, false);
+            compare(core.systemDetected, false);
+            compare(jobs.length, 2);
+            verify(core.toasts.length > 0);
         }
         function fixtureInput() {
             return {

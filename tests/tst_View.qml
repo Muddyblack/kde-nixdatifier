@@ -52,7 +52,18 @@ Item {
     TestCase {
         name: "SharedView"
         when: windowShown
+        function test_non_nixos_tools() {
+            core.isNixOS = false;
+            core.activeViewMode = "tools";
+            compare(app.releaseLabel, "Nix");
+            verify(!app.tools.some(t => t.key === "secrets"));
+            verify(app.tools.some(t => t.key === "health"));
+            verify(app.tools.some(t => t.key === "devenv"));
+            verify(findChild(app, "toolsView").visible);
+        }
         function init() {
+            core.isNixOS = true;
+            core.systemDetected = true;
             host.holdTerminal = false;
             host.terminalJobs = [];
             commandSpy.clear();

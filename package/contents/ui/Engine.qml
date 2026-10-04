@@ -18,7 +18,7 @@ Item {
         }
 
         if (root.nixosVersion !== "")
-            lines.push("NixOS " + root.nixosVersion);
+            lines.push((root.isNixOS ? "NixOS " : "Nix ") + root.nixosVersion);
 
         var activeDetails = root.detailsCache[root.activeGenNum];
         if (activeDetails && activeDetails.kernelVer)
@@ -40,7 +40,7 @@ Item {
 
         if (root.isBusy)
             lines.push("Status: Running action…");
-        else if (root.isLoadingGens)
+        else if (!root.isNixOS || root.isLoadingGens)
             lines.push("Status: Loading generations…");
         else if (root.isCheckingFlake)
             lines.push("Status: Checking flake updates…");
@@ -50,7 +50,7 @@ Item {
             lines.push("Status: Calculating update preview…");
         else if (root.isProbingHash)
             lines.push("Status: Calculating hash…");
-        else if (root.isLoadingSecrets)
+        else if (!root.isNixOS || root.isLoadingSecrets)
             lines.push("Status: Checking secrets…");
 
         return lines.join("\n");
@@ -79,7 +79,7 @@ Item {
     property int flakeEpoch: 0
     readonly property string flakePath: root.resolvedFlakePath || (root.settings ? root.settings.flakePath : "") || ""
     function refreshFlakeContext(callback) {
-        if (!root.settings)
+        if (!root.isNixOS || !root.settings)
             return;
         const requested = root.settings.flakePath;
         sh(shq(root.scriptDir + "flake-context") + " " + shq(requested), function (cmd, out, err, code) {
@@ -192,6 +192,9 @@ Item {
     property string lastActivationTime: ""
     property string uptime: ""
     property string userFacePath: ""
+    // Keep system operations disabled until sysinfo identifies the host.
+    property bool isNixOS: false
+    property bool systemDetected: false
 
     // ── Disk usage state ──────────────────────────────────────────────────────
     // All values in bytes (0 = unknown).
@@ -243,7 +246,7 @@ Item {
     property string pendingCleanup: ""
 
     // ── View state ────────────────────────────────────────────────────────────
-    property string activeViewMode: root.settings.defaultView || "timeline"
+    property string activeViewMode: "tools"
 
     // ── Toast queue ───────────────────────────────────────────────────────────
     property var toasts: []
@@ -376,7 +379,7 @@ Item {
     // ── Operations ────────────────────────────────────────────────────────────
 
     function refreshGenerations() {
-        if (root.isLoadingGens)
+        if (!root.isNixOS || root.isLoadingGens)
             return;
         root.isLoadingGens = true;
         sh(shq(root.scriptDir + "generations"), function (cmd, out, err, code) {
@@ -428,7 +431,7 @@ Item {
     }
 
     function probeSecrets() {
-        if (root.isLoadingSecrets)
+        if (!root.isNixOS || root.isLoadingSecrets)
             return;
         root.isLoadingSecrets = true;
         sh(shq(root.scriptDir + "secrets") + " " + shq(root.settings.secretsPath) + " " + shq(root.settings.secretsSourcePath) + " " + shq(root.flakePath), function (cmd, out, err, code) {
@@ -1140,7 +1143,7 @@ Item {
     }
 
     function checkFlakeUpdates(isRetry, quiet) {
-        if (root.isBusy || root.isCheckingFlake || root.flakePath === "")
+        if (!root.isNixOS || root.isBusy || root.isCheckingFlake || root.flakePath === "")
             return;
         root.isCheckingFlake = true;
         const epoch = root.flakeEpoch;
@@ -1225,7 +1228,7 @@ Item {
         const announce = signature !== root._notifiedUpdates;
         root._notifiedUpdates = signature;
         if (updates.length > 0 && announce && !quiet)
-            root.notify(qsTr("NixOS — flake updates available"), (updates.length === 1 ? qsTr("1 flake input has updates available") : qsTr("%1 flake inputs have updates available").arg(updates.length)), false);
+            root.notify(qsTr("Nix — flake updates available"), (updates.length === 1 ? qsTr("1 flake input has updates available") : qsTr("%1 flake inputs have updates available").arg(updates.length)), false);
     }
 
     Timer {
@@ -1237,6 +1240,8 @@ Item {
 
     property string updatingInput: ""
     function runFlakeUpdateInput(inputName) {
+        if (!root.isNixOS)
+            return;
         if (root.flakePath === "") {
             root.pushToast(qsTr("Flake path not configured."), true);
             return;
@@ -1266,6 +1271,8 @@ Item {
     }
 
     function runDryPreview(inputName, overrideRef) {
+        if (!root.isNixOS)
+            return;
         if (!overrideRef || root.flakePath === "" || !root.flakeUpdates.some(u => u.input === inputName && u.overrideRef === overrideRef))
             return;
         if (root.isDryRunning || root.dryRunCache[inputName] && root.dryRunCache[inputName].status !== "error")
@@ -1340,6 +1347,8 @@ Item {
     }
 
     function runCustomCommand(cmd, label) {
+        if (!root.isNixOS)
+            return;
         if (root.isBusy || !cmd.trim())
             return;
         root.isBusy = true;
@@ -1357,6 +1366,8 @@ Item {
     }
 
     function requestAction(genNum, action) {
+        if (!root.isNixOS)
+            return;
         if (root.isBusy) {
             root.pushToast(qsTr("Already running another action — please wait."), true);
             return;
@@ -1386,6 +1397,8 @@ Item {
     }
 
     function executeAction(genNum, action) {
+        if (!root.isNixOS)
+            return;
         if (root.isBusy)
             return;
         // CRITICAL: this builds a command that runs under `pkexec` (root).
@@ -1427,9 +1440,9 @@ Item {
                 delete: qsTr("Generation %1 deleted.")
             };
             const okTitle = {
-                switch: qsTr("NixOS — generation activated"),
-                rollback: qsTr("NixOS — next boot set"),
-                delete: qsTr("NixOS — generation deleted")
+                switch: qsTr("Nix — generation activated"),
+                rollback: qsTr("Nix — next boot set"),
+                delete: qsTr("Nix — generation deleted")
             };
             root.pushToast(ok[action].arg(genNum), false);
             root.notify(okTitle[action], ok[action].arg(genNum), false);
@@ -1441,6 +1454,8 @@ Item {
     }
 
     function executeCleanup(mode) {
+        if (!root.isNixOS)
+            return;
         if (mode === "gc-custom") {
             const cmd = root.settings.gcCustomCommand.trim();
             if (cmd)
@@ -1471,7 +1486,7 @@ Item {
             const freed = (out || "").match(/(\d[\d,.]* \w+B?) freed/i);
             const msg = freed ? qsTr("GC complete — %1 freed.").arg(freed[1]) : qsTr("GC complete.");
             root.pushToast(msg, false);
-            root.notify(qsTr("NixOS — garbage collected"), msg, false);
+            root.notify(qsTr("Nix — garbage collected"), msg, false);
             root.refreshGenerations();
             root.probeDiskUsage(true);
         }, true);
@@ -1628,6 +1643,13 @@ Item {
         root.uptime = p[2] ? p[2].trim() : "";
         root.lastActivationTime = p[3] ? p[3].trim() : "";
         root.userFacePath = p[4] ? p[4].trim() : "";
+        // Detect once; subsequent probes only refresh display information.
+        const flag = p[5] === undefined ? "" : p[5].trim();
+        if (!root.systemDetected && (flag === "1" || flag === "0")) {
+            root.isNixOS = flag === "1";
+            root.systemDetected = true;
+            root.activeViewMode = root.isNixOS ? (root.settings.defaultView || "timeline") : "tools";
+        }
     }
 
     function parseSopsInfo(text) {
@@ -1692,18 +1714,28 @@ Item {
 
     // ── Init & timers ─────────────────────────────────────────────────────────
     function start() {
-        refreshGenerations();
-        probeSecrets();
+        // Probe sysinfo first so we know whether we're on NixOS before launching
+        // NixOS-only operations (generations, secrets).  The probe is fast — it
+        // reads /etc/hostname, /proc/uptime and a few small files.
+        sh(shq(root.scriptDir + "sysinfo"), function (cmd, out, err, code) {
+            root.parseSysInfo(out || "");
+            if (root.isNixOS) {
+                refreshGenerations();
+                probeSecrets();
+                root.refreshFlakeContext(function () {
+                    if (root.settings.showFlakeSection && root.flakePath !== "") {
+                        root.bootFlakeCheck();
+                        root.armCacheWatcher();
+                    }
+                });
+            } else if (!root.systemDetected) {
+                root.pushToast(qsTr("Could not detect the system. System actions are unavailable."), true);
+            }
+        });
         loadHistory();
         // Deliberately no probeDiskUsage() here — it is deferred to the first
         // time the popup is opened, so a widget that is never clicked never
         // walks /nix/store.
-        root.refreshFlakeContext(function () {
-            if (root.settings.showFlakeSection && root.flakePath !== "") {
-                root.bootFlakeCheck();
-                root.armCacheWatcher();
-            }
-        });
     }
 
     Component.onCompleted: {
@@ -1740,7 +1772,7 @@ Item {
     onExpandedChanged: {
         if (root.initialized && root.settings && root.expanded && root.autoStart) {
             root.syncFlakeContext(false);
-            if (root.settings.autoRefreshOnOpen)
+            if (root.isNixOS && root.settings.autoRefreshOnOpen)
                 refreshGenerations();
             // The very first open always populates the disk chips; after that
             // it follows the auto-refresh preference. Either way it is
@@ -1753,7 +1785,7 @@ Item {
     Timer {
         interval: 30000
         repeat: true
-        running: root.autoStart && root.expanded && root.flakePath !== ""
+        running: root.isNixOS && root.autoStart && root.expanded && root.flakePath !== ""
         onTriggered: root.syncFlakeContext(false)
     }
     Connections {
@@ -1780,7 +1812,7 @@ Item {
     // Full network probe on the configured interval.
     Timer {
         interval: Math.max(60, root.settings.checkInterval || 3600) * 1000
-        running: root.autoStart && root.settings.showFlakeSection && root.flakePath !== ""
+        running: root.isNixOS && root.autoStart && root.settings.showFlakeSection && root.flakePath !== ""
         repeat: true
         onTriggered: root.checkFlakeUpdates()
     }
@@ -1806,7 +1838,7 @@ Item {
     property int _watcherFastArms: 0
 
     function armCacheWatcher() {
-        if (!root.autoStart || !root.settings.showFlakeSection || root._watcherArmed || root._watcherDisabled || root.flakePath === "")
+        if (!root.isNixOS || !root.autoStart || !root.settings.showFlakeSection || root._watcherArmed || root._watcherDisabled || root.flakePath === "")
             return;
         root._watcherArmed = true;
         root._watcherArmedAtMs = Date.now();

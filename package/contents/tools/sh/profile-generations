@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Usage: profile-generations
+# Generations of the user's own Nix profiles, for systems that are not NixOS
+# (no system generations to show). Reads the profile link files only; no nix
+# command runs. One line per generation, newest first:
+#   kind<TAB>number<TAB>unix-time<TAB>current(1|0)<TAB>store-path
+# kind: home-manager | profile
+set -u
+
+state="${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/nix/profiles"
+per_user="/nix/var/nix/profiles/per-user/${USER:-root}"
+
+emit() {
+    local kind="$1" dir="$2" name="$3" link num stamp target current_target
+    [ -d "$dir" ] || return 0
+    current_target=$(readlink -f "$dir/$name" 2>/dev/null)
+    for link in "$dir/$name"-*-link; do
+        [ -L "$link" ] || continue
+        num="${link##*/$name-}"
+        num="${num%-link}"
+        [[ "$num" =~ ^[0-9]+$ ]] || continue
+        target=$(readlink -f "$link" 2>/dev/null)
+        stamp=$(stat -c %Y "$link" 2>/dev/null || echo 0)
+        printf '%s\t%s\t%s\t%s\t%s\n' "$kind" "$num" "$stamp" \
+            "$([ -n "$current_target" ] && [ "$target" = "$current_target" ] && echo 1 || echo 0)" "$target"
+    done
+}
+
+{
+    emit home-manager "$state" home-manager
+    emit home-manager "$per_user" home-manager
+    emit profile "$state" profile
+    emit profile "$per_user" profile
+} | sort -t$'\t' -k1,1 -k2,2nr | awk -F'\t' '!seen[$1 FS $2]++ && ++count[$1] <= 40'
+exit 0

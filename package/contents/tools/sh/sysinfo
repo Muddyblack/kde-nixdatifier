@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Emits: hostname --- nixos-version --- uptime --- last-profile-activation --- user-face-icon
+# Emits: hostname --- nixos-version --- uptime --- last-profile-activation --- user-face-icon --- is-nixos
 cat /etc/hostname 2>/dev/null || hostname 2>/dev/null
 echo '---'
 cat /run/current-system/nixos-version 2>/dev/null
@@ -14,4 +14,12 @@ for f in "$HOME/.face" "$HOME/.face.icon" "/var/lib/AccountsService/icons/$USER"
         break
     fi
 done
+# Last field: 1 on NixOS, 0 on any other distribution that has Nix installed.
+echo
+echo '---'
+if [ -e /etc/NIXOS ] || grep -Eqs "^ID=(nixos|\"nixos\"|'nixos')[[:space:]]*$" /etc/os-release 2>/dev/null; then
+    echo 1
+else
+    echo 0
+fi
 exit 0

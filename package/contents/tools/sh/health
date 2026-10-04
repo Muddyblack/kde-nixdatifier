@@ -14,7 +14,7 @@ kv=()
 
 # ── NixOS release and a rough end-of-life ───────────────────────────────────
 is_nixos=0
-if [ -r /etc/os-release ] && grep -q '^ID=nixos' /etc/os-release; then
+if [ -e /etc/NIXOS ] || grep -Eqs "^ID=(nixos|\"nixos\"|'nixos')[[:space:]]*$" /etc/os-release; then
     is_nixos=1
 fi
 kv+=("nixos=$is_nixos")

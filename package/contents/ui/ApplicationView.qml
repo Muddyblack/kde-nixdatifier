@@ -75,6 +75,7 @@ FullView {
     metaCache: engine.metaCache
     showPackageIcons: engine.settings.showPackageIcons
     iconStyle: engine.iconStyle
+    isNixOS: engine.isNixOS
 
     onViewModeChanged: mode => engine.activeViewMode = mode
     onConfirmPending: () => engine.confirmPendingAction()

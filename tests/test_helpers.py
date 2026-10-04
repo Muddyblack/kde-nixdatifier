@@ -43,6 +43,33 @@ class Helpers(unittest.TestCase):
             timeout=15,
         )
 
+    def test_sysinfo_distribution_detection(self):
+        source = (HELPERS / "sysinfo").read_text()
+        os_release = self.root / "os-release"
+        marker = self.root / "NIXOS"
+        helper = self.root / "sysinfo"
+        helper.write_text(source.replace("/etc/os-release", str(os_release))
+                          .replace("/etc/NIXOS", str(marker))
+                          .replace("/run/current-system/nixos-version", str(self.root / "version"))
+                          .replace("/nix/var/nix/profiles/system", str(self.root / "system")))
+        helper.chmod(0o755)
+        for distro, expected in [("ubuntu", "0"), ("nixos", "1"),
+                                ('"nixos"', "1"), ("'nixos'", "1"),
+                                ("nixos-other", "0")]:
+            with self.subTest(distro=distro):
+                os_release.write_text("ID=" + distro + "\n")
+                result = subprocess.run([str(helper)], env=self.env, text=True,
+                                        capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0)
+                fields = result.stdout.split("---")
+                self.assertEqual(len(fields), 6)
+                self.assertEqual(fields[5].strip(), expected)
+        marker.touch()
+        os_release.unlink()
+        result = subprocess.run([str(helper)], env=self.env, text=True,
+                                capture_output=True, timeout=5)
+        self.assertEqual(result.stdout.split("---")[5].strip(), "1")
+
     def test_cache_is_shared_across_install_paths_and_serialized(self):
         counter = self.root / "count"
         source = f"printf 'probe\\n' >> '{counter}'\nsleep .2\nprintf 'result'\n"

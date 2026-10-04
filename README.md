@@ -309,6 +309,14 @@ Or install specific packages directly via `environment.systemPackages`:
 
 Right-click your panel → *Add Widgets…* → *Get New Widgets…* and search for **Nixdatifier**, or download it from the [KDE Store](https://store.kde.org/p/2360222/).
 
+On Linux distributions with Nix installed but without NixOS, the app opens on Tools
+and labels the system “Nix”. Development environments, system health, hashes and
+store inspection remain available. NixOS generations, updates, comparison, secrets,
+rebuild commands and generation cleanup are hidden. Home Manager/profile generation
+counts appear in System health; a Home Manager timeline is not implemented.
+This mode has automated fixture coverage, but has not yet been tested on a real
+non-NixOS installation.
+
 ### Manual install for Plasma 6 (any distro)
 
 ```bash
