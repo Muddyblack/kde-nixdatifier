@@ -1,39 +1,65 @@
 #!/usr/bin/env bash
 # Usage: devenv discover
 #        devenv inspect <project-dir>
+#        devenv shells <project-dir>
+#        devenv shellpkgs <project-dir> <shell-name>
+#        devenv space
+#        devenv clear <project-dir>
 #
 # Describes development environments (direnv, Nix flakes, shell.nix, devenv).
-# Works on any distro; nothing here needs NixOS. Every probe is read-only and
-# offline: no .envrc is executed and nothing is fetched.
+# Works on any distro; nothing here needs NixOS. Everything except `clear` is
+# read-only and offline: no .envrc is executed and nothing is fetched.
 #
-# discover  prints one "<dir>\t<state>" line per project direnv already knows
-#           (state: allowed | denied), newest first.
-# inspect   prints four \x1e-separated fields:
-#   [0] key=value metadata lines
-#   [1] the first lines of the .envrc
-#   [2] flake.lock root inputs, TSV: name type source ref rev lastModified follows
-#   [3] devShells exposed by the flake for this system, one per line
+# discover   one "<dir>\t<state>" line per project direnv already knows
+#            (state: allowed | denied), newest first.
+# inspect    fast (no Nix evaluation). Four \x1e-separated fields:
+#              [0] key=value metadata lines
+#              [1] the first lines of the .envrc
+#              [2] flake.lock root inputs, TSV: name type source ref rev lastModified follows
+#              [3] reserved (empty); use `shells` for devShells
+# shells     devShell names the flake exposes for this system, one per line.
+#            Evaluates the flake, so it is slow and bounded. Exit 3 if it fails.
+# shellpkgs  package names inside one devShell, one per line.
+# space      "<dir>\t<bytes>\t<closure|files>\t<mtime>" per project that has a
+#            .direnv cache, largest first. Closure sizes count store paths shared
+#            with other projects in each of them.
+# clear      removes <dir>/.direnv (a cache direnv rebuilds), freeing its GC roots.
 set -u
 export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:${HOME:-/root}/.nix-profile/bin"
 
 data_home="${XDG_DATA_HOME:-${HOME:-/root}/.local/share}"
 
+lowprio() {
+    if command -v ionice >/dev/null 2>&1; then
+        nice -n 19 ionice -c 3 "$@"
+    else
+        nice -n 19 "$@"
+    fi
+}
+
+resolve() {
+    local dir="$1"
+    [[ "$dir" == "~" || "$dir" == "~/"* ]] && dir="${HOME:-/root}${dir#\~}"
+    realpath -m -- "$dir" 2>/dev/null || printf '%s' "$1"
+}
+
+# One `find` and shell builtins only: direnv users can have dozens of entries,
+# and a process per entry made this the slowest call in the widget.
 discover() {
-    local state file rc
+    local state stamp file rc
     for state in allow deny; do
-        for file in "$data_home"/direnv/"$state"/*; do
-            [ -f "$file" ] || continue
-            rc=$(head -n 1 "$file" 2>/dev/null)
+        [ -d "$data_home/direnv/$state" ] || continue
+        while IFS=$'\t' read -r stamp file; do
+            IFS= read -r rc < "$file" 2>/dev/null || continue
             [[ "$rc" == /* && -f "$rc" ]] || continue
-            printf '%s\t%s\t%s\n' "$(stat -c %Y "$file")" "$(dirname -- "$rc")" "$([ "$state" = allow ] && echo allowed || echo denied)"
-        done
+            printf '%s\t%s\t%s\n' "${stamp%.*}" "${rc%/*}" "$([ "$state" = allow ] && echo allowed || echo denied)"
+        done < <(find "$data_home/direnv/$state" -maxdepth 1 -type f -printf '%T@\t%p\n' 2>/dev/null)
     done | sort -rn | awk -F'\t' '!seen[$2]++ {print $2 "\t" $3}'
 }
 
 inspect() {
-    local dir="$1"
-    [[ "$dir" == "~" || "$dir" == "~/"* ]] && dir="${HOME:-/root}${dir#\~}"
-    dir=$(realpath -m -- "$dir" 2>/dev/null) || dir="$1"
+    local dir
+    dir=$(resolve "$1")
     [ -d "$dir" ] || { echo "ERROR: not a directory: $1" >&2; exit 2; }
     cd -- "$dir" || exit 2
 
@@ -107,7 +133,7 @@ inspect() {
     fi
     kv+=("description=$description")
 
-    local locks="" shells="" lock_count=0 lock_oldest="" lock_newest=""
+    local locks="" lock_count=0 lock_oldest="" lock_newest=""
     if [ -f flake.lock ] && command -v jq >/dev/null 2>&1; then
         locks=$(jq -r '
             . as $l
@@ -131,30 +157,86 @@ inspect() {
     fi
     kv+=("lock_inputs=$lock_count" "lock_oldest=$lock_oldest" "lock_newest=$lock_newest")
 
-    # devShells come from evaluating the flake. That can be slow on a cold
-    # cache, so it is bounded and never allowed to hit the network.
-    local shells_state=""
-    if [ -f flake.nix ] && command -v nix >/dev/null 2>&1; then
-        local arch
-        arch="$(uname -m)-linux"
-        if shells=$(timeout --kill-after=2s 25s nix eval --offline --json ".#devShells.$arch" --apply builtins.attrNames 2>/dev/null); then
-            shells=$(printf '%s' "$shells" | jq -r '.[]' 2>/dev/null)
-            shells_state=ok
-        else
-            shells=""
-            shells_state=unavailable
-        fi
-    fi
-    kv+=("devshells=$shells_state")
-
     printf '%s\n' "${kv[@]}"
     printf '\x1e%s' "$envrc"
     printf '\x1e%s' "$locks"
-    printf '\x1e%s' "$shells"
+    printf '\x1e'
+}
+
+# Evaluating a flake can be slow on a cold cache, so it is bounded and never
+# allowed to touch the network.
+shells() {
+    local dir
+    dir=$(resolve "$1")
+    [ -d "$dir" ] || { echo "ERROR: not a directory: $1" >&2; exit 2; }
+    cd -- "$dir" || exit 2
+    [ -f flake.nix ] || exit 0
+    command -v nix >/dev/null 2>&1 || exit 3
+    local out
+    out=$(timeout --kill-after=2s 25s nix eval --offline --json ".#devShells.$(uname -m)-linux" --apply builtins.attrNames 2>/dev/null) || exit 3
+    printf '%s' "$out" | jq -r '.[]' 2>/dev/null
+}
+
+shellpkgs() {
+    local dir name
+    dir=$(resolve "$1")
+    name="${2:-}"
+    [[ "$name" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "ERROR: invalid shell name" >&2; exit 2; }
+    [ -d "$dir" ] || { echo "ERROR: not a directory: $1" >&2; exit 2; }
+    cd -- "$dir" || exit 2
+    command -v nix >/dev/null 2>&1 || exit 3
+    local out
+    out=$(timeout --kill-after=2s 30s nix eval --offline --json ".#devShells.$(uname -m)-linux.\"$name\"" \
+        --apply 'd: map (p: p.name or (p.pname or "?")) ((d.buildInputs or []) ++ (d.nativeBuildInputs or []))' 2>/dev/null) || exit 3
+    printf '%s' "$out" | jq -r '.[]' 2>/dev/null | sort -u
+}
+
+# Measures every direnv project with a cache, four at a time at idle priority.
+space() {
+    local tmp n=0 dir
+    tmp=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/nixdatifier-space.XXXXXXXX") || exit 1
+    trap 'rm -rf -- "$tmp"' EXIT
+    while IFS= read -r dir; do
+        [ -d "$dir/.direnv" ] || continue
+        measure_one "$dir" > "$tmp/$n" &
+        n=$((n + 1))
+        (( n % 4 == 0 )) && wait
+    done < <(discover | cut -f1 | head -n 40)
+    wait
+    cat "$tmp"/* 2>/dev/null | sort -t$'\t' -k2 -rn
+}
+
+measure_one() {
+    local dir="$1" layout="$1/.direnv" link bytes="" kind=closure
+    link=$(find "$layout" -maxdepth 1 -type l -name 'flake-profile-*' ! -name '*.rc' -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n 1 | cut -d' ' -f2-)
+    if [ -n "$link" ] && command -v nix >/dev/null 2>&1; then
+        bytes=$(lowprio nix path-info -S "$link" 2>/dev/null | awk '{print $NF}')
+    fi
+    if [ -z "$bytes" ]; then
+        bytes=$(( $(du -sk "$layout" 2>/dev/null | cut -f1) * 1024 ))
+        kind=files
+    fi
+    printf '%s\t%s\t%s\t%s\n' "$dir" "$bytes" "$kind" "$(stat -c %Y "$layout")"
+}
+
+clear_cache() {
+    local dir
+    dir=$(resolve "$1")
+    # Only ever remove the cache of a folder that is a direnv project.
+    if [ -d "$dir/.direnv" ] && [ -f "$dir/.envrc" ]; then
+        rm -rf -- "$dir/.direnv"
+    else
+        echo "ERROR: no direnv cache to clear in $1" >&2
+        exit 2
+    fi
 }
 
 case "${1:-}" in
     discover) discover ;;
     inspect) inspect "${2:?missing project directory}" ;;
-    *) echo "usage: devenv discover | inspect <dir>" >&2; exit 2 ;;
+    shells) shells "${2:?missing project directory}" ;;
+    shellpkgs) shellpkgs "${2:?missing project directory}" "${3:?missing shell name}" ;;
+    space) space ;;
+    clear) clear_cache "${2:?missing project directory}" ;;
+    *) echo "usage: devenv discover | inspect <dir> | shells <dir> | shellpkgs <dir> <name> | space | clear <dir>" >&2; exit 2 ;;
 esac

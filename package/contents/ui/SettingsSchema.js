@@ -66,6 +66,10 @@ var fields = [
         "label": "Dev environments"
       },
       {
+        "value": "health",
+        "label": "System health"
+      },
+      {
         "value": "secrets",
         "label": "Secrets"
       },

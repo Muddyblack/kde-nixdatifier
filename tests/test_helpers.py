@@ -347,9 +347,12 @@ case "$1" in
     status) echo "Found RC path $PWD/.envrc"; echo "Found RC allowed 1" ;;
 esac
 """)
-        self.script(self.bin / "nix", "printf '[\"default\",\"ci\"]'\n")
+        # inspect must stay fast: it never evaluates the flake.
+        marker = self.root / "nix-ran"
+        self.script(self.bin / "nix", f"touch '{marker}'\n")
         result = self.run_helper("devenv", "inspect", str(project))
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(marker.exists())
         meta, envrc, locks, shells = result.stdout.split("\x1e")
         facts = dict(line.split("=", 1) for line in meta.splitlines())
         self.assertEqual(facts["name"], "my app")
@@ -359,7 +362,6 @@ esac
         self.assertEqual(facts["description"], "A demo shell")
         self.assertEqual(facts["lock_inputs"], "2")
         self.assertEqual(facts["lock_oldest"], "1700000000")
-        self.assertEqual(facts["devshells"], "ok")
         self.assertIn("flake.nix", facts["files"].split(","))
         self.assertEqual(envrc, "use flake\ndotenv")
         self.assertEqual(
@@ -369,7 +371,104 @@ esac
                 "utils\tfollows\t\t\t\t0\tnixpkgs",
             ],
         )
-        self.assertEqual(shells.splitlines(), ["default", "ci"])
+        self.assertEqual(shells, "")
+
+    def test_devenv_lists_shells_and_their_packages(self):
+        project = self.root / "app"
+        project.mkdir()
+        (project / "flake.nix").write_text("{}")
+        self.script(self.bin / "nix", """
+case "$*" in
+    *attrNames*) printf '["default","ci"]' ;;
+    *buildInputs*) printf '["git-2.50","jq-1.8","git-2.50"]' ;;
+    *) exit 1 ;;
+esac
+""")
+        shells = self.run_helper("devenv", "shells", str(project))
+        self.assertEqual(shells.stdout.splitlines(), ["default", "ci"])
+        packages = self.run_helper("devenv", "shellpkgs", str(project), "default")
+        self.assertEqual(packages.stdout.splitlines(), ["git-2.50", "jq-1.8"])
+        # Names are interpolated into a Nix attribute path, so they are checked.
+        bad = self.run_helper("devenv", "shellpkgs", str(project), 'x"; builtins.abort "')
+        self.assertEqual(bad.returncode, 2)
+        # A failed evaluation is reported, never shown as an empty shell.
+        self.script(self.bin / "nix", "exit 1\n")
+        self.assertEqual(self.run_helper("devenv", "shells", str(project)).returncode, 3)
+
+    def test_devenv_space_and_clear(self):
+        data = self.root / "data"
+        big, small, plain = (self.root / n for n in ("big", "small", "plain"))
+        for index, project in enumerate((big, small, plain)):
+            (project / ".direnv").mkdir(parents=True)
+            (project / ".envrc").write_text("use flake\n")
+            entry = data / "direnv" / "allow" / project.name
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            entry.write_text(f"{project}/.envrc\n")
+        for project in (big, small):
+            (project / ".direnv" / "flake-profile-abc").symlink_to("/nix/store/x-profile")
+        (plain / ".direnv" / "cache.bin").write_bytes(b"x" * 4096)
+        self.script(self.bin / "nix", f"""
+case "$*" in
+    *{big}*) echo "/nix/store/x-profile 9000" ;;
+    *) echo "/nix/store/x-profile 100" ;;
+esac
+""")
+        self.env["XDG_DATA_HOME"] = str(data)
+        result = self.run_helper("devenv", "space")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        rows = [line.split("\t") for line in result.stdout.splitlines()]
+        self.assertEqual([(r[0], r[1], r[2]) for r in rows],
+                         [(str(big), "9000", "closure"), (str(plain), "4096", "files"),
+                          (str(small), "100", "closure")])
+        cleared = self.run_helper("devenv", "clear", str(big))
+        self.assertEqual(cleared.returncode, 0, cleared.stderr)
+        self.assertFalse((big / ".direnv").exists())
+        self.assertTrue((big / ".envrc").exists())
+        # Only direnv projects are touched.
+        stray = self.root / "stray"
+        (stray / ".direnv").mkdir(parents=True)
+        self.assertEqual(self.run_helper("devenv", "clear", str(stray)).returncode, 2)
+        self.assertTrue((stray / ".direnv").exists())
+
+    def test_health_reports_caches_failed_units_and_nix(self):
+        self.script(self.bin / "nix", """
+case "$1" in
+    --version) echo 'nix (Nix) 2.34.0' ;;
+    config) printf 'experimental-features = flakes nix-command\\nsubstituters = https://good.example/ https://good.example https://dead.example\\ntrusted-users = root\\n' ;;
+esac
+""")
+        self.script(self.bin / "curl", """
+case "$*" in
+    *good.example*) printf '200 0.120' ;;
+    *) printf '000 3.000' ;;
+esac
+""")
+        self.script(self.bin / "systemctl", """
+case "$*" in
+    *show*) echo 'exit-code' ;;
+    *--user*) echo 'mine.service loaded failed failed Mine' ;;
+    *) echo 'sshd.service loaded failed failed SSH' ;;
+esac
+""")
+        # The error line wins over a generic last line.
+        self.script(self.bin / "journalctl", """
+printf 'starting\\nFailed to register: Unable to acquire bus name\\nMain process exited\\n'
+""")
+        result = self.run_helper("health")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        meta, units, caches = result.stdout.split("\x1e")
+        facts = dict(line.split("=", 1) for line in meta.splitlines())
+        self.assertEqual(facts["nix"], "nix (Nix) 2.34.0")
+        self.assertEqual(facts["experimental"], "flakes nix-command")
+        why = "Failed to register: Unable to acquire bus name"
+        self.assertEqual(units.splitlines(), [
+            f"system\tsshd.service\texit-code\t{why}",
+            f"user\tmine.service\texit-code\t{why}",
+        ])
+        cache_rows = sorted(line.split("\t") for line in caches.splitlines())
+        # The duplicate with a trailing slash is checked once.
+        self.assertEqual([(r[0], r[1]) for r in cache_rows],
+                         [("https://dead.example", "unreachable"), ("https://good.example", "ok")])
 
     def test_devenv_handles_a_plain_folder(self):
         project = self.root / "plain"
@@ -380,7 +479,6 @@ esac
         facts = dict(line.split("=", 1) for line in result.stdout.split("\x1e")[0].splitlines())
         self.assertEqual(facts["envrc_state"], "none")
         self.assertEqual(facts["files"], "")
-        self.assertEqual(facts["devshells"], "")
 
     def test_devenv_rejects_missing_directories(self):
         result = self.run_helper("devenv", "inspect", str(self.root / "missing"))

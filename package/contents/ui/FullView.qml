@@ -122,6 +122,13 @@ Pane {
     property var devEnvProjects: []
     property string systemFlakePath: ""
     property bool isProbingDevEnv: false
+    property var shellPackages: ({})
+    property var devSpace: []
+    property bool isMeasuringSpace: false
+
+    // ── System health tool state ─────────────────────────────────────────────
+    property var healthResult: null
+    property bool isProbingHealth: false
 
     signal viewModeChanged(string mode)
     signal refreshRequested
@@ -138,6 +145,11 @@ Pane {
     signal storeUsageRequested(string path)
     signal devEnvRequested(string path)
     signal devEnvDiscoverRequested
+    signal devEnvActionRequested(string kind, string dir)
+    signal shellPackagesRequested(string dir, string name)
+    signal measureSpaceRequested
+    signal clearCacheRequested(string dir)
+    signal healthRequested(bool force)
     signal confirmPending
     signal cancelPending
     signal cleanupVariantPicked(string mode)
@@ -169,6 +181,12 @@ Pane {
     property bool enableMotion: true
     property bool enableLiveSwitch: true
     readonly property var tools: [
+        {
+            key: "health",
+            label: qsTr("System health"),
+            hint: qsTr("Reboots, /boot space, caches and failed units."),
+            glyph: "ic_check"
+        },
         {
             key: "devenv",
             label: qsTr("Dev environments"),
@@ -662,18 +680,23 @@ Pane {
                 ColumnLayout {
                     width: toolsScroll.availableWidth
                     spacing: 0
-                    RowLayout {
+                    // Two rows of three; narrow windows get two columns instead
+                    // of squeezing six cards onto one line.
+                    GridLayout {
                         Layout.fillWidth: true
                         Layout.bottomMargin: 17
-                        spacing: 10
+                        columns: fullView.width >= 440 ? 3 : 2
+                        columnSpacing: 10
+                        rowSpacing: 10
+                        uniformCellWidths: true
+                        uniformCellHeights: true
                         Repeater {
                             model: fullView.tools
                             AbstractButton {
                                 id: toolButton
                                 required property var modelData
                                 Layout.fillWidth: true
-                                Layout.preferredWidth: 1
-                                Layout.alignment: Qt.AlignTop
+                                Layout.fillHeight: true
                                 implicitHeight: toolContent.implicitHeight + 30
                                 padding: 13
                                 hoverEnabled: true
@@ -695,11 +718,13 @@ Pane {
                                         color: fullView.accentColor
                                     }
                                     Text {
+                                        Layout.fillWidth: true
                                         Layout.bottomMargin: 7
                                         text: toolButton.modelData.label
                                         color: fullView.textColor
                                         font.pixelSize: 11 * fullView.fs
                                         font.weight: Font.Medium
+                                        wrapMode: Text.WordWrap
                                     }
                                     Text {
                                         Layout.fillWidth: true
@@ -1027,9 +1052,28 @@ Pane {
                     devEnvProjects: fullView.devEnvProjects
                     systemFlakePath: fullView.systemFlakePath
                     isProbingDevEnv: fullView.isProbingDevEnv
+                    shellPackages: fullView.shellPackages
+                    devSpace: fullView.devSpace
+                    isMeasuringSpace: fullView.isMeasuringSpace
 
                     onDevEnvRequested: path => fullView.devEnvRequested(path)
                     onDiscoverRequested: fullView.devEnvDiscoverRequested()
+                    onActionRequested: (kind, dir) => fullView.devEnvActionRequested(kind, dir)
+                    onShellPackagesRequested: (dir, name) => fullView.shellPackagesRequested(dir, name)
+                    onMeasureSpaceRequested: fullView.measureSpaceRequested()
+                    onClearCacheRequested: dir => fullView.clearCacheRequested(dir)
+                    onCopyToClipboard: t => fullView.copyToClipboard(t)
+                }
+                HealthTab {
+                    anchors.fill: parent
+                    activeViewMode: fullView.activeViewMode
+                    accentColor: fullView.accentColor
+                    textColor: fullView.textColor
+                    fs: fullView.fs
+                    healthResult: fullView.healthResult
+                    isProbingHealth: fullView.isProbingHealth
+
+                    onHealthRequested: force => fullView.healthRequested(force)
                     onCopyToClipboard: t => fullView.copyToClipboard(t)
                 }
                 SecretsTab {

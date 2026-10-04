@@ -325,7 +325,74 @@ Item {
             compare(r.inputs[0].rev, "abc1234");
             compare(r.inputs[0].modified, 100);
             compare(r.shells, ["default", "ci"]);
-            verify(r.shellsKnown);
+            compare(r.shellsState, "loading");
+        }
+        function test_devenv_shows_result_before_shells_arrive() {
+            core.isProbingDevEnv = false;
+            core.probeDevEnv("/p/app");
+            const meta = "dir=/p/app\nname=app\nenvrc_state=allowed\nfiles=flake.nix\n";
+            jobs[0].callback(jobs[0].cmd, meta + "\x1e\x1e\x1e", "", 0);
+            // The fast result is already visible while the flake evaluates.
+            compare(core.devEnvResult.name, "app");
+            compare(core.devEnvResult.shellsState, "loading");
+            compare(jobs.length, 2);
+            verify(jobs[1].cmd.indexOf("shells") >= 0);
+            jobs[1].callback(jobs[1].cmd, "default\nci\n", "", 0);
+            compare(core.devEnvResult.shellsState, "ok");
+            compare(core.devEnvResult.shells, ["default", "ci"]);
+        }
+        function test_devenv_shells_failure_is_not_an_empty_list() {
+            core.isProbingDevEnv = false;
+            core.probeDevEnv("/p/app");
+            jobs[0].callback(jobs[0].cmd, "dir=/p/app\nname=app\nfiles=flake.nix\n\x1e\x1e\x1e", "", 0);
+            jobs[1].callback(jobs[1].cmd, "", "", 3);
+            compare(core.devEnvResult.shellsState, "unavailable");
+        }
+        function test_devenv_without_a_flake_skips_shell_evaluation() {
+            core.isProbingDevEnv = false;
+            core.probeDevEnv("/p/plain");
+            jobs[0].callback(jobs[0].cmd, "dir=/p/plain\nname=plain\nfiles=.envrc\n\x1e\x1e\x1e", "", 0);
+            compare(jobs.length, 1);
+            compare(core.devEnvResult.shellsState, "none");
+        }
+        function test_health_output_is_parsed() {
+            const text = "nixos=1\nrelease=26.05\neol=2026-12-31\nreboot_required=1\nkernel_running=7.2.7\nkernel_next=7.2.8\n" + "boot_total_kb=1000\nboot_avail_kb=100\nnix=nix (Nix) 2.34.0\nhm_generations=3\nhm_newest=100\n" + "\x1esystem\tsshd.service\nuser\tmine.service\n\x1ehttps://a.example\tok\t120\nhttps://b.example\tunreachable\t3000";
+            const h = core.parseHealth(text);
+            verify(h.nixos);
+            verify(h.rebootRequired);
+            compare(h.bootEntries, -1);
+            compare(h.bootAvailKb, 100);
+            compare(h.hmGenerations, 3);
+            compare(h.failedUnits.length, 2);
+            compare(h.failedUnits[1].scope, "user");
+            compare(h.caches[1].status, "unreachable");
+            compare(h.caches[0].ms, 120);
+        }
+        function test_failed_path_and_service_are_one_problem() {
+            const text = "nixos=1\n\x1euser\tw.path\tunit-start-limit-hit\tStart request repeated too quickly.\n" + "user\tw.service\tstart-limit-hit\tFailed to start W\n" + "user\tother.service\texit-code\tUnable to acquire bus name\n" + "system\tw.path\tsuccess\t\n\x1e";
+            const units = core.parseHealth(text).failedUnits;
+            // user w.path folds into user w.service; the system w.path has no service and stays.
+            compare(units.length, 3);
+            compare(units[0].name, "w.service");
+            verify(units[0].paired);
+            compare(units[0].result, "start-limit-hit");
+            compare(units[0].command, "systemctl --user status w.service");
+            compare(units[1].name, "other.service");
+            verify(!units[1].paired);
+            compare(units[2].command, "systemctl status w.path");
+        }
+        function test_devenv_actions_run_the_right_commands() {
+            core.devEnvAction("allow", "/p/it's");
+            verify(jobs[0].cmd.indexOf("direnv allow") === 0);
+            verify(jobs[0].cmd.indexOf("'/p/it'\\''s'") > 0);
+            jobs[0].callback(jobs[0].cmd, "", "", 0);
+            core.isProbingDevEnv = false;
+            jobs = [];
+            core.devEnvAction("update", "/p/app");
+            verify(jobs[0].cmd.indexOf("nix flake update") > 0);
+            jobs = [];
+            core.devEnvAction("rm-rf", "/p/app");
+            compare(jobs.length, 0);
         }
         function test_devenv_probe_failure_is_an_error() {
             core.isProbingDevEnv = false;

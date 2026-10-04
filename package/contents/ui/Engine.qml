@@ -225,6 +225,12 @@ Item {
     property var storeUsageResult: null
     property var devEnvProjects: []   // [{ dir, name, state }]
     property var devEnvResult: null   // parsed `devenv inspect`, or { isError, value }
+    property int devEnvEpoch: 0       // bumped to bypass cached reads after a change
+    property var shellPackages: ({})  // "dir#shell" -> { state, names }
+    property var devSpace: []         // [{ dir, name, bytes, kind, modified }]
+    property bool isMeasuringSpace: false
+    property var healthResult: null
+    property bool isProbingHealth: false
 
     // ── Rebuild history state ────────────────────────────────────────────────
     // Newest first, as returned by the "history list" script.
@@ -581,7 +587,8 @@ Item {
             description: meta.description || "",
             lockOldest: num(meta.lock_oldest),
             lockNewest: num(meta.lock_newest),
-            shellsKnown: meta.devshells === "ok",
+            // devShells need a flake evaluation, so they arrive after the rest.
+            shellsState: "loading",
             inputs: (parts[2] || "").split("\n").filter(l => l).map(function (line) {
                 const f = line.split("\t");
                 return {
@@ -603,7 +610,7 @@ Item {
         if (clean === "" || root.isProbingDevEnv)
             return;
         root.isProbingDevEnv = true;
-        sh(shq(root.scriptDir + "run") + " cached " + shq("devenv:" + clean) + " 45 -- " + shq(root.scriptDir + "devenv") + " inspect " + shq(clean), function (cmd, out, err, code) {
+        sh(shq(root.scriptDir + "run") + " cached " + shq("devenv:" + clean + ":" + root.devEnvEpoch) + " 45 -- " + shq(root.scriptDir + "devenv") + " inspect " + shq(clean), function (cmd, out, err, code) {
             root.isProbingDevEnv = false;
             if (code !== 0) {
                 root.devEnvResult = {
@@ -612,7 +619,184 @@ Item {
                 };
                 return;
             }
-            root.devEnvResult = root.parseDevEnv(out);
+            const result = root.parseDevEnv(out);
+            root.devEnvResult = result;
+            // Shown at once; the slow flake evaluation fills the shells in.
+            if (result.files.indexOf("flake.nix") >= 0)
+                root.loadDevShells(result.dir);
+            else
+                root.devEnvResult = Object.assign({}, result, {
+                    shellsState: "none"
+                });
+        });
+    }
+    function loadDevShells(dir) {
+        sh(shq(root.scriptDir + "run") + " cached " + shq("devshells:" + dir + ":" + root.devEnvEpoch) + " 180 -- " + shq(root.scriptDir + "devenv") + " shells " + shq(dir), function (cmd, out, err, code) {
+            const current = root.devEnvResult;
+            if (!current || current.isError || current.dir !== dir)
+                return;
+            root.devEnvResult = Object.assign({}, current, {
+                shells: code === 0 ? (out || "").split("\n").map(s => s.trim()).filter(s => s) : [],
+                shellsState: code === 0 ? "ok" : "unavailable"
+            });
+        });
+    }
+    // Packages inside one devShell, fetched when the user asks (it evaluates).
+    function loadShellPackages(dir, name) {
+        const key = dir + "#" + name;
+        if (root.shellPackages[key] && root.shellPackages[key].state !== "error")
+            return;
+        const put = value => {
+            const next = Object.assign({}, root.shellPackages);
+            next[key] = value;
+            root.shellPackages = next;
+        };
+        put({
+            state: "loading",
+            names: []
+        });
+        sh(shq(root.scriptDir + "run") + " cached " + shq("shellpkgs:" + key) + " 600 -- " + shq(root.scriptDir + "devenv") + " shellpkgs " + shq(dir) + " " + shq(name), function (cmd, out, err, code) {
+            put(code === 0 ? {
+                state: "ok",
+                names: (out || "").split("\n").map(s => s.trim()).filter(s => s)
+            } : {
+                state: "error",
+                names: []
+            });
+        });
+    }
+    // Actions on a project. Terminal ones stay visible, like custom commands.
+    function devEnvAction(kind, dir) {
+        if (!dir)
+            return;
+        const refresh = () => {
+            root.devEnvEpoch++;
+            root.probeDevEnv(dir);
+        };
+        if (kind === "allow") {
+            sh("direnv allow " + shq(dir), function (cmd, out, err, code) {
+                root.pushToast(code === 0 ? qsTr("Allowed %1").arg(dir) : (err || qsTr("direnv allow failed")).trim(), code !== 0);
+                refresh();
+            });
+            return;
+        }
+        const commands = {
+            "shell": "if command -v direnv >/dev/null 2>&1 && [ -f .envrc ]; then direnv exec . \"$SHELL\"; else nix develop; fi",
+            "update": "nix flake update"
+        };
+        if (!commands[kind])
+            return;
+        sh(shq(root.scriptDir + "terminal") + " " + shq(root.terminalApp) + " " + shq(dir) + " " + shq(commands[kind]), function (cmd, out, err, code) {
+            if (code !== 0)
+                root.pushToast(qsTr("The terminal exited with status %1. %2").arg(code).arg((err || "").trim()), true);
+            if (kind === "update")
+                refresh();
+        });
+    }
+    function measureDevSpace() {
+        if (root.isMeasuringSpace)
+            return;
+        root.isMeasuringSpace = true;
+        sh(shq(root.scriptDir + "run") + " cached " + shq("devspace:" + root.devEnvEpoch) + " 600 -- " + shq(root.scriptDir + "devenv") + " space", function (cmd, out, err, code) {
+            root.isMeasuringSpace = false;
+            if (code !== 0)
+                return;
+            root.devSpace = (out || "").split("\n").filter(l => l.indexOf("\t") > 0).map(function (line) {
+                const f = line.split("\t");
+                return {
+                    dir: f[0],
+                    name: f[0].split("/").filter(x => x).pop() || f[0],
+                    bytes: parseInt(f[1], 10) || 0,
+                    kind: f[2] || "files",
+                    modified: parseInt(f[3], 10) || 0
+                };
+            });
+        });
+    }
+    function clearDevCache(dir) {
+        sh(shq(root.scriptDir + "devenv") + " clear " + shq(dir), function (cmd, out, err, code) {
+            root.pushToast(code === 0 ? qsTr("Cleared the cache of %1. The next garbage collection can reclaim its space.").arg(dir) : (err || qsTr("Could not clear the cache")).trim(), code !== 0);
+            root.devEnvEpoch++;
+            root.devSpace = root.devSpace.filter(p => p.dir !== dir || code !== 0);
+            root.probeDevEnv(dir);
+        });
+    }
+
+    // ── System health: the quiet failures on a Nix system ─────────────────────
+    function parseHealth(text) {
+        const parts = (text || "").split("\x1e");
+        const meta = {};
+        for (const line of (parts[0] || "").split("\n")) {
+            const i = line.indexOf("=");
+            if (i > 0)
+                meta[line.slice(0, i)] = line.slice(i + 1);
+        }
+        const num = v => parseInt(v, 10) || 0;
+        const rows = (part, min) => (part || "").split("\n").map(l => l.split("\t")).filter(f => f.length >= min && f[0]);
+        return {
+            isError: false,
+            nixos: meta.nixos === "1",
+            release: meta.release || "",
+            eol: meta.eol || "",
+            unstable: meta.unstable === "1",
+            rebootKnown: "reboot_required" in meta,
+            rebootRequired: meta.reboot_required === "1",
+            kernelRunning: meta.kernel_running || "",
+            kernelNext: meta.kernel_next || "",
+            bootTotalKb: num(meta.boot_total_kb),
+            bootAvailKb: num(meta.boot_avail_kb),
+            bootEntries: "boot_entries" in meta ? num(meta.boot_entries) : -1,
+            nixVersion: meta.nix || "",
+            experimental: meta.experimental || "",
+            trustedUsers: meta.trusted_users || "",
+            channels: num(meta.channels),
+            hmGenerations: num(meta.hm_generations),
+            hmNewest: num(meta.hm_newest),
+            profileGenerations: num(meta.profile_generations),
+            profileNewest: num(meta.profile_newest),
+            failedUnits: root.groupFailedUnits(rows(parts[1], 2).map(f => ({
+                        scope: f[0],
+                        name: f[1],
+                        result: f[2] || "",
+                        why: f[3] || ""
+                    }))),
+            caches: rows(parts[2], 3).map(f => ({
+                        url: f[0],
+                        status: f[1],
+                        ms: num(f[2])
+                    }))
+        };
+    }
+    // A failed `x.path` and the `x.service` it triggers are one problem: show
+    // them as one row. The service's own message wins, it says what went wrong.
+    function groupFailedUnits(units) {
+        const out = [];
+        for (const unit of units) {
+            const base = unit.name.replace(/\.(path|service)$/, "");
+            const isPath = unit.name.endsWith(".path");
+            const pair = isPath ? units.find(u => u.scope === unit.scope && u.name === base + ".service") : null;
+            if (pair)
+                continue; // folded into its service below
+            const path = unit.name.endsWith(".service") ? units.find(u => u.scope === unit.scope && u.name === base + ".path") : null;
+            out.push(Object.assign({}, unit, {
+                paired: !!path,
+                // The path unit's result is the real reason when the service itself exited fine.
+                result: path && path.result && unit.result !== path.result && unit.result === "success" ? path.result : unit.result,
+                command: "systemctl " + (unit.scope === "user" ? "--user " : "") + "status " + unit.name
+            }));
+        }
+        return out;
+    }
+    function probeHealth(force) {
+        if (root.isProbingHealth)
+            return;
+        root.isProbingHealth = true;
+        sh(shq(root.scriptDir + "run") + " cached " + shq("health") + " " + (force ? 0 : 120) + " -- " + shq(root.scriptDir + "health"), function (cmd, out, err, code) {
+            root.isProbingHealth = false;
+            root.healthResult = code === 0 ? root.parseHealth(out) : {
+                isError: true,
+                value: (err || out || qsTr("Could not check the system")).trim()
+            };
         });
     }
 

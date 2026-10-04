@@ -17,13 +17,33 @@ Item {
     required property string activeViewMode
     property string systemFlakePath: ""
     property bool isProbingDevEnv: false
+    property var shellPackages: ({})
+    property var devSpace: []
+    property bool isMeasuringSpace: false
 
     readonly property var result: devEnvResult
     readonly property bool found: !!result && !result.isError
+    readonly property bool hasFlake: found && result.files.indexOf("flake.nix") >= 0
+    // The devShell whose packages are shown, and the cache awaiting a second click.
+    property string openShell: ""
+    property string confirmClear: ""
+    property string shownDir: ""
+    readonly property var openPackages: found && openShell !== "" ? (shellPackages[result.dir + "#" + openShell] || null) : null
+    onResultChanged: {
+        const dir = found ? result.dir : "";
+        if (dir !== shownDir) {
+            shownDir = dir;
+            openShell = "";
+        }
+    }
 
     signal devEnvRequested(string path)
     signal discoverRequested
     signal copyToClipboard(string text)
+    signal actionRequested(string kind, string dir)
+    signal shellPackagesRequested(string dir, string name)
+    signal measureSpaceRequested
+    signal clearCacheRequested(string dir)
 
     anchors.fill: parent
     visible: activeViewMode === "devenv"
@@ -261,46 +281,134 @@ Item {
                 fs: devEnvTab.fs
                 text: qsTr("This project has a flake but no .envrc. Add `use flake` to .envrc and run `direnv allow` to load its shell automatically.")
             }
-            CodeBlock {
+            // ── Actions ──────────────────────────────────────────────────────
+            Flow {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
-                visible: devEnvTab.found && (devEnvTab.result.envrcState === "blocked" || devEnvTab.result.envrcState === "denied")
-                label: qsTr("Allow this environment")
-                text: devEnvTab.found ? "direnv allow " + devEnvTab.result.dir : ""
-                accent: devEnvTab.accentColor
-                textColor: devEnvTab.textColor
-                fs: devEnvTab.fs
-                onCopyRequested: t => devEnvTab.copyToClipboard(t)
+                Layout.topMargin: 14
+                spacing: 8
+                visible: devEnvTab.found
+                UI.ActionButton {
+                    objectName: "devEnvAllow"
+                    visible: devEnvTab.found && (devEnvTab.result.envrcState === "blocked" || devEnvTab.result.envrcState === "denied")
+                    text: qsTr("Allow (direnv allow)")
+                    primary: true
+                    accent: devEnvTab.accentColor
+                    font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                    onClicked: devEnvTab.actionRequested("allow", devEnvTab.result.dir)
+                }
+                UI.ActionButton {
+                    objectName: "devEnvShell"
+                    visible: devEnvTab.found && (devEnvTab.hasFlake || devEnvTab.result.envrcState === "allowed")
+                    text: qsTr("Open shell")
+                    glyph: Qt.resolvedUrl("assets/ic_terminal.svg")
+                    tip: qsTr("Open a terminal inside this project's environment")
+                    font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                    onClicked: devEnvTab.actionRequested("shell", devEnvTab.result.dir)
+                }
+                UI.ActionButton {
+                    objectName: "devEnvUpdate"
+                    visible: devEnvTab.found && devEnvTab.result.files.indexOf("flake.lock") >= 0
+                    text: qsTr("Update inputs")
+                    glyph: Qt.resolvedUrl("assets/ic_refresh.svg")
+                    tip: qsTr("Run `nix flake update` in a terminal")
+                    font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                    onClicked: devEnvTab.actionRequested("update", devEnvTab.result.dir)
+                }
             }
 
             // ── devShells ────────────────────────────────────────────────────
             Subheading {
                 Layout.fillWidth: true
                 Layout.topMargin: 22
-                visible: devEnvTab.found && devEnvTab.result.shells.length > 0
+                visible: devEnvTab.hasFlake
                 text: qsTr("Dev shells")
-                detail: devEnvTab.found ? String(devEnvTab.result.shells.length) : ""
+                detail: devEnvTab.found && devEnvTab.result.shellsState === "ok" ? String(devEnvTab.result.shells.length) : ""
                 fs: devEnvTab.fs
             }
             Flow {
                 Layout.fillWidth: true
                 Layout.topMargin: 9
                 spacing: 7
-                visible: devEnvTab.found && devEnvTab.result.shells.length > 0
+                visible: devEnvTab.hasFlake && devEnvTab.result.shells.length > 0
                 Repeater {
                     model: devEnvTab.found ? devEnvTab.result.shells : []
+                    Rectangle {
+                        id: shellChip
+                        required property string modelData
+                        readonly property bool open: devEnvTab.openShell === modelData
+                        implicitWidth: shellText.implicitWidth + 20
+                        implicitHeight: shellText.implicitHeight + 12
+                        radius: 7
+                        color: open ? UI.Theme.wash(devEnvTab.accentColor, .22) : shellArea.containsMouse ? UI.Theme.wash(devEnvTab.accentColor, .14) : UI.Theme.wash(devEnvTab.accentColor, .08)
+                        border.color: open ? devEnvTab.accentColor : "transparent"
+                        Text {
+                            id: shellText
+                            anchors.centerIn: parent
+                            text: shellChip.modelData
+                            color: devEnvTab.accentColor
+                            font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                        }
+                        MouseArea {
+                            id: shellArea
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                devEnvTab.openShell = shellChip.open ? "" : shellChip.modelData;
+                                if (devEnvTab.openShell !== "")
+                                    devEnvTab.shellPackagesRequested(devEnvTab.result.dir, shellChip.modelData);
+                            }
+                        }
+                        ToolTip.visible: shellArea.containsMouse
+                        ToolTip.delay: 500
+                        ToolTip.text: qsTr("Show the packages in this shell")
+                    }
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                visible: devEnvTab.openShell !== ""
+                text: !devEnvTab.openPackages || devEnvTab.openPackages.state === "loading" ? qsTr("Evaluating the shell…") : devEnvTab.openPackages.state === "error" ? qsTr("Could not list the packages offline.") : devEnvTab.openPackages.names.length === 0 ? qsTr("This shell adds no packages.") : ""
+                color: UI.Theme.muted
+                font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                wrapMode: Text.Wrap
+            }
+            Flow {
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                spacing: 6
+                visible: !!devEnvTab.openPackages && devEnvTab.openPackages.names.length > 0
+                Repeater {
+                    model: devEnvTab.openPackages ? devEnvTab.openPackages.names.slice(0, 60) : []
                     Tag {
                         required property string modelData
                         text: modelData
-                        tone: devEnvTab.accentColor
+                        tone: UI.Theme.muted
                         fs: devEnvTab.fs
                     }
                 }
             }
             Text {
                 Layout.fillWidth: true
-                Layout.topMargin: 12
-                visible: devEnvTab.found && devEnvTab.result.files.indexOf("flake.nix") >= 0 && !devEnvTab.result.shellsKnown
+                Layout.topMargin: 6
+                visible: !!devEnvTab.openPackages && devEnvTab.openPackages.names.length > 60
+                text: devEnvTab.openPackages ? qsTr("and %1 more").arg(devEnvTab.openPackages.names.length - 60) : ""
+                color: UI.Theme.muted
+                font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                visible: devEnvTab.hasFlake && devEnvTab.result.shellsState === "loading"
+                text: qsTr("Evaluating the flake…")
+                color: UI.Theme.muted
+                font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 10
+                visible: devEnvTab.hasFlake && devEnvTab.result.shellsState === "unavailable"
                 text: qsTr("Dev shells could not be listed offline. Evaluate the flake once with `nix flake show`, or check that flake.nix is tracked by git.")
                 color: UI.Theme.muted
                 font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
@@ -378,6 +486,116 @@ Item {
                         }
                     }
                 }
+            }
+
+            // ── Space held by dev environments ───────────────────────────────
+            Subheading {
+                Layout.fillWidth: true
+                Layout.topMargin: 22
+                text: qsTr("Space held by dev environments")
+                detail: devEnvTab.devSpace.length > 0 ? String(devEnvTab.devSpace.length) : ""
+                fs: devEnvTab.fs
+                UI.ActionButton {
+                    objectName: "devEnvMeasure"
+                    text: devEnvTab.isMeasuringSpace ? qsTr("Measuring…") : devEnvTab.devSpace.length > 0 ? qsTr("Measure again") : qsTr("Measure")
+                    flatStyle: true
+                    implicitHeight: 23
+                    enabled: !devEnvTab.isMeasuringSpace
+                    font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                    onClicked: devEnvTab.measureSpaceRequested()
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 9
+                visible: devEnvTab.devSpace.length === 0
+                text: devEnvTab.isMeasuringSpace ? qsTr("Measuring your direnv projects…") : qsTr("Each project's .direnv cache keeps its packages alive, which is often why garbage collection frees less than expected. Measuring reads each project's closure size at low priority.")
+                color: UI.Theme.muted
+                font.pixelSize: UI.Theme.fontPx(10, devEnvTab.fs)
+                wrapMode: Text.Wrap
+                lineHeight: 1.4
+            }
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.topMargin: 9
+                visible: devEnvTab.devSpace.length > 0
+                implicitHeight: spaceList.implicitHeight + 12
+                radius: 9
+                color: "#03ffffff"
+                border.color: "#0effffff"
+                ColumnLayout {
+                    id: spaceList
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 6
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 0
+                    Repeater {
+                        model: devEnvTab.devSpace
+                        RowLayout {
+                            id: spaceRow
+                            required property var modelData
+                            Layout.fillWidth: true
+                            Layout.topMargin: 7
+                            Layout.bottomMargin: 7
+                            spacing: 10
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 1
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: spaceRow.modelData.name
+                                    color: devEnvTab.textColor
+                                    font.pixelSize: UI.Theme.fontPx(11, devEnvTab.fs)
+                                    elide: Text.ElideRight
+                                }
+                                Text {
+                                    Layout.fillWidth: true
+                                    text: spaceRow.modelData.dir
+                                    color: UI.Theme.muted
+                                    font.family: UI.Theme.fixedWidthFont.family
+                                    font.pixelSize: UI.Theme.fontPx(9, devEnvTab.fs)
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+                            Text {
+                                text: UI.Theme.formatBytes(spaceRow.modelData.bytes) || "—"
+                                color: devEnvTab.textColor
+                                font.pixelSize: UI.Theme.fontPx(11, devEnvTab.fs)
+                            }
+                            UI.ActionButton {
+                                objectName: "devEnvClear"
+                                readonly property bool confirming: devEnvTab.confirmClear === spaceRow.modelData.dir
+                                text: confirming ? qsTr("Confirm") : qsTr("Clear cache")
+                                flatStyle: !confirming
+                                primary: confirming
+                                accent: UI.Theme.negative
+                                implicitHeight: 23
+                                tip: qsTr("Delete this project's .direnv cache. direnv rebuilds it the next time you enter the folder.")
+                                font.pixelSize: UI.Theme.fontPx(9, devEnvTab.fs)
+                                onClicked: {
+                                    if (confirming) {
+                                        devEnvTab.confirmClear = "";
+                                        devEnvTab.clearCacheRequested(spaceRow.modelData.dir);
+                                    } else {
+                                        devEnvTab.confirmClear = spaceRow.modelData.dir;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Text {
+                Layout.fillWidth: true
+                Layout.topMargin: 8
+                visible: devEnvTab.devSpace.length > 0
+                text: qsTr("Sizes are closure sizes; packages shared between projects count in each. Space is only reclaimed by the next garbage collection.")
+                color: UI.Theme.muted
+                font.pixelSize: UI.Theme.fontPx(9, devEnvTab.fs)
+                wrapMode: Text.Wrap
             }
 
             // ── .envrc ───────────────────────────────────────────────────────

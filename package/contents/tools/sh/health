@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# Usage: health
+# A quick read-only check of the things that quietly go wrong on a Nix system.
+# Emits three \x1e-separated fields:
+#   [0] key=value lines (missing keys mean "not applicable here")
+#   [1] failed units, one "system<TAB>name" or "user<TAB>name" per line
+#   [2] binary caches, one "url<TAB>status<TAB>milliseconds" per line
+#       (status: ok | slow | unreachable)
+# Works on non-NixOS systems too: NixOS-only checks are simply left out.
+set -u
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:${HOME:-/root}/.nix-profile/bin"
+
+kv=()
+
+# ── NixOS release and a rough end-of-life ───────────────────────────────────
+is_nixos=0
+if [ -r /etc/os-release ] && grep -q '^ID=nixos' /etc/os-release; then
+    is_nixos=1
+fi
+kv+=("nixos=$is_nixos")
+
+if [ "$is_nixos" = 1 ]; then
+    release=$(sed -n 's/^VERSION_ID="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' /etc/os-release | head -n 1)
+    kv+=("release=$release")
+    # Stable releases ship in May and November and are supported for about
+    # seven months. This is the usual schedule, not a published promise.
+    if [[ "$release" =~ ^([0-9]{2})\.(05|11)$ ]]; then
+        year=$((2000 + 10#${BASH_REMATCH[1]}))
+        if [ "${BASH_REMATCH[2]}" = 05 ]; then
+            kv+=("eol=$year-12-31")
+        else
+            kv+=("eol=$((year + 1))-06-30")
+        fi
+    fi
+    if [ -r /run/current-system/nixos-version ] && grep -q 'pre' /run/current-system/nixos-version; then
+        kv+=("unstable=1")
+    fi
+
+    # ── Reboot needed: the running kernel is not the one just activated ─────
+    if [ -e /run/booted-system ] && [ -e /run/current-system ]; then
+        needs=0
+        for part in kernel initrd kernel-modules; do
+            booted=$(readlink -f "/run/booted-system/$part" 2>/dev/null)
+            current=$(readlink -f "/run/current-system/$part" 2>/dev/null)
+            [ -n "$booted" ] && [ -n "$current" ] && [ "$booted" != "$current" ] && needs=1
+        done
+        kv+=("reboot_required=$needs")
+        kernel_path=$(readlink -f /run/current-system/kernel 2>/dev/null)
+        if [ -n "$kernel_path" ]; then
+            # The store directory is "<hash>-linux[-flavour]-<version>".
+            kernel_dir=$(basename -- "$(dirname -- "$kernel_path")")
+            kv+=("kernel_next=$(printf '%s' "$kernel_dir" | sed -n 's/.*-\([0-9][0-9.]*\)$/\1/p')")
+        fi
+        kv+=("kernel_running=$(uname -r)")
+    fi
+
+    # ── /boot: too many generations is a classic way to fill it ─────────────
+    if [ -d /boot ] && mountpoint -q /boot 2>/dev/null; then
+        read -r size avail _ < <(df -Pk /boot 2>/dev/null | awk 'NR==2 {print $2, $4}')
+        kv+=("boot_total_kb=${size:-}" "boot_avail_kb=${avail:-}")
+        # Entry files exist for systemd-boot only; other loaders leave this out.
+        if [ -d /boot/loader/entries ]; then
+            kv+=("boot_entries=$(find /boot/loader/entries -maxdepth 1 -name '*.conf' 2>/dev/null | grep -c . || true)")
+        fi
+    fi
+fi
+
+# ── Nix itself ──────────────────────────────────────────────────────────────
+substituters=""
+if command -v nix >/dev/null 2>&1; then
+    kv+=("nix=$(nix --version 2>/dev/null | head -n 1)")
+    # One `nix config show` answers everything below (older Nix: show-config).
+    conf=$(nix config show 2>/dev/null || nix show-config 2>/dev/null || true)
+    setting() { printf '%s\n' "$conf" | sed -n "s/^$1 = //p" | head -n 1; }
+    kv+=("experimental=$(setting experimental-features)")
+    kv+=("trusted_users=$(setting trusted-users)")
+    substituters=$(setting substituters)
+    kv+=("channels=$(nix-channel --list 2>/dev/null | grep -c . || true)")
+fi
+
+# ── Home Manager and `nix profile` generations ──────────────────────────────
+state="${XDG_STATE_HOME:-${HOME:-/root}/.local/state}/nix/profiles"
+count_links() {
+    local n=0 newest=0 link stamp
+    for link in "$@"; do
+        [ -L "$link" ] || continue
+        n=$((n + 1))
+        stamp=$(stat -c %Y "$link" 2>/dev/null || echo 0)
+        [ "$stamp" -gt "$newest" ] && newest=$stamp
+    done
+    printf '%s %s' "$n" "$newest"
+}
+read -r hm_count hm_newest < <(count_links "$state"/home-manager-*-link)
+read -r prof_count prof_newest < <(count_links "$state"/profile-*-link /nix/var/nix/profiles/per-user/"${USER:-root}"/profile-*-link)
+kv+=("hm_generations=$hm_count" "hm_newest=$hm_newest" "profile_generations=$prof_count" "profile_newest=$prof_newest")
+
+printf '%s\n' "${kv[@]}"
+
+# ── Failed units ────────────────────────────────────────────────────────────
+printf '\x1e'
+# One line per failed unit: scope, name, systemd's Result, and the log line that
+# most likely says why. Capped so a broken system cannot make this slow.
+failed_unit_line() {
+    local scope="$1" unit="$2" flag="" result why
+    [ "$scope" = user ] && flag="--user"
+    result=$(systemctl $flag show -p Result --value "$unit" 2>/dev/null)
+    # Prefer the last log line that names an error; fall back to the last line.
+    why=$(journalctl $flag -u "$unit" -n 8 --no-pager -o cat 2>/dev/null | tr -d '\t' | awk '
+        { last = $0 }
+        /[Uu]nable|[Cc]annot|[Cc]an.t |[Ee]rror|[Dd]enied|[Nn]ot found|[Nn]o such|[Rr]efused|[Tt]imed out|repeated too quickly/ { hit = $0 }
+        END { print (hit != "" ? hit : last) }' | cut -c1-200)
+    printf '%s\t%s\t%s\t%s\n' "$scope" "$unit" "$result" "$why"
+}
+if command -v systemctl >/dev/null 2>&1; then
+    {
+        systemctl --failed --no-legend --plain --no-pager 2>/dev/null | awk 'NF {print "system\t" $1}'
+        systemctl --user --failed --no-legend --plain --no-pager 2>/dev/null | awk 'NF {print "user\t" $1}'
+    } | head -n 12 | while IFS=$'\t' read -r scope unit; do
+        failed_unit_line "$scope" "$unit"
+    done
+fi
+
+# ── Binary caches: checked together so a dead one costs three seconds, not N ─
+printf '\x1e'
+if [ -n "$substituters" ] && command -v curl >/dev/null 2>&1; then
+    tmp=$(mktemp -d "${XDG_RUNTIME_DIR:-/tmp}/nixdatifier-health.XXXXXXXX") || exit 0
+    trap 'rm -rf -- "$tmp"' EXIT
+    n=0
+    declare -A seen=()
+    for url in $substituters; do
+        url="${url%/}"
+        [[ "$url" == https://* || "$url" == http://* ]] || continue
+        [ -n "${seen[$url]:-}" ] && continue
+        seen[$url]=1
+        (
+            result=$(curl -s -o /dev/null --max-time 3 -w '%{http_code} %{time_total}' "${url%/}/nix-cache-info" 2>/dev/null)
+            code=${result%% *}
+            ms=$(awk -v t="${result##* }" 'BEGIN { printf "%d", t * 1000 }')
+            if [ "$code" = 200 ]; then
+                [ "$ms" -gt 1500 ] && status=slow || status=ok
+            else
+                status=unreachable
+            fi
+            printf '%s\t%s\t%s\n' "$url" "$status" "$ms" > "$tmp/$n"
+        ) &
+        n=$((n + 1))
+    done
+    wait
+    cat "$tmp"/* 2>/dev/null
+fi
+exit 0

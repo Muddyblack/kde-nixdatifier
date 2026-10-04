@@ -119,6 +119,16 @@ FullView {
     isProbingDevEnv: engine.isProbingDevEnv
     onDevEnvRequested: path => engine.probeDevEnv(path)
     onDevEnvDiscoverRequested: engine.discoverDevEnvs()
+    shellPackages: engine.shellPackages
+    devSpace: engine.devSpace
+    isMeasuringSpace: engine.isMeasuringSpace
+    onDevEnvActionRequested: (kind, dir) => engine.devEnvAction(kind, dir)
+    onShellPackagesRequested: (dir, name) => engine.loadShellPackages(dir, name)
+    onMeasureSpaceRequested: engine.measureDevSpace()
+    onClearCacheRequested: dir => engine.clearDevCache(dir)
+    healthResult: engine.healthResult
+    isProbingHealth: engine.isProbingHealth
+    onHealthRequested: force => engine.probeHealth(force)
     onDryRunRequested: (inputName, overrideRef) => engine.runDryPreview(inputName, overrideRef)
     onUpdateInputRequested: inputName => engine.runFlakeUpdateInput(inputName)
     onPopOutRequested: engine.pinned = !engine.pinned
