@@ -1,5 +1,5 @@
 {
-  description = "NixOS Generation Explorer — KDE Plasma 6 and Hyprland widgets for managing NixOS generations, package diffs, flake updates, and secrets";
+  description = "Nixdatifier — NixOS generations, package diffs, flake updates and dev environments as a tray app, a KDE Plasma 6 widget and a Quickshell panel";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
@@ -21,9 +21,18 @@
           runtime = with pkgs; [ bash nix jq git curl coreutils util-linux findutils gnugrep gnused gawk inotify-tools libnotify polkit ];
           runtimePath = pkgs.lib.makeBinPath runtime;
           tray = pkgs.qt6.callPackage ./tray/package.nix { inherit version; };
+          # The desktop-independent app: a window and a tray icon, no Plasma or
+          # Quickshell needed. Works on any distribution that has Nix.
+          nixdatifier = pkgs.qt6.callPackage ./standalone/package.nix {
+            inherit version;
+            src = pkgs.lib.fileset.toSource {
+              root = ./.;
+              fileset = pkgs.lib.fileset.unions [ ./standalone ./tray ./package ];
+            };
+          };
         in
         {
-          inherit tray;
+          inherit tray nixdatifier;
           hyprland = pkgs.stdenvNoCC.mkDerivation {
             pname = "nixdatifier-hyprland";
             inherit version;
@@ -108,6 +117,12 @@
       apps = forAllSystems (system:
         let pkgs = pkgsFor system; in
         {
+          # `nix run github:Muddyblack/kde-nixdatifier`
+          default = self.apps.${system}.nixdatifier;
+          nixdatifier = {
+            type = "app";
+            program = "${self.packages.${system}.nixdatifier}/bin/nixdatifier";
+          };
           hyprland = {
             type = "app";
             program = "${self.packages.${system}.hyprland}/bin/nixdatifier-hyprland";
@@ -165,6 +180,13 @@
             '';
           };
         });
+
+      # ── integration for NixOS and Home Manager users ──────────────────────
+      overlays.default = final: prev: {
+        nixdatifier = self.packages.${final.stdenv.hostPlatform.system}.nixdatifier;
+      };
+      nixosModules.default = import ./nix/nixos-module.nix self;
+      homeManagerModules.default = import ./nix/home-manager-module.nix self;
 
       # ── formatter (nixpkgs-fmt via nix fmt) ───────────────────────────────
       formatter = forAllSystems (system: (pkgsFor system).nixpkgs-fmt);

@@ -1,12 +1,16 @@
 # Nixdatifier
 
-**Nixdatifier** is a panel widget made for NixOS. It shows your system generations, what changed between them, pending flake updates, secrets, and Nix store usage, and lets you roll back or clean up without opening a terminal.
+**Nixdatifier** is a panel widget made for NixOS. It shows your system generations, what changed between them, pending flake updates, secrets, dev environments (direnv and flakes), and Nix store usage, and lets you roll back or clean up without opening a terminal.
 Inspired by Apdatifier.
+
+Not using Plasma? The same app also runs as a standalone tray app on GNOME, COSMIC, Sway, XFCE and others (`nix run github:Muddyblack/kde-nixdatifier`). See GitHub.
 
 ---
 
 ### What's new in this release
 
+*   **Dev environments tool:** pick any project folder, or one direnv already knows, and see whether its `.envrc` is allowed, what it loads, how old the cached environment is, its flake inputs and how stale they are, and its dev shells. Works on any distribution.
+*   **Standalone tray app** for any desktop, plus NixOS and Home Manager modules (GitHub).
 *   **Redesigned interface** with four tabs: Generations, Updates, Compare, and Tools.
 *   **Package counts on every generation** (added / removed / changed), plus kernel and NixOS release badges.
 *   **Inline generation actions:** Activate, Set boot, and Delete right on the expanded card.

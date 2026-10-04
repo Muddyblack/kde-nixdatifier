@@ -27,7 +27,7 @@
 </p>
 
 <p align="center">
-  A KDE Plasma 6 widget and Hyprland / Quickshell panel for NixOS: system generations, package diffs, flake updates, secrets, and Nix store usage, right from your panel.
+  System generations, package diffs, flake updates, secrets, dev environments, and Nix store usage, from a tray icon on any Linux desktop. Also available as a KDE Plasma 6 widget and a Quickshell panel.
 </p>
 
 ## A closer look
@@ -64,19 +64,68 @@
   - **Store usage** — Why a store path cannot be garbage-collected: its GC roots, referrers, and closure size.
 - **Nix store** — Store size, free space, reclaimable space, and one-click cleanup (plus your own cleanup command).
 - **Custom commands** — Up to four terminal commands (for example `nixos-rebuild switch`) in the footer Commands panel. The widget follows the command until it actually exits.
-- **Plasma and Hyprland** — The same interface runs as a Plasma widget and as a Quickshell popup with a panel pill and tray icon.
+- **Dev environments** — Point it at any project folder (or pick one direnv already knows) to see whether its `.envrc` is allowed, what it loads (`use flake`, `use nix`, `dotenv`, …), how old the cached environment is, the flake's inputs and how stale they are, and its `devShells`. Nothing in it is specific to NixOS.
+- **Any desktop** — A standalone app (window plus tray icon) needs only Qt, so it runs on GNOME, COSMIC, Sway, niri, XFCE, KDE, and X11. The same interface also runs as a Plasma widget and as a Quickshell popup with a panel pill. See [Where it runs](#where-it-runs).
 - **Appearance** — Accent and timeline colors, background color and opacity, corner radius, font scale, icon style, glow, and motion (all animations can be turned off).
 
 ---
 
-## Plasma and Hyprland
+## Where it runs
 
-Both desktops share one QML application (`package/contents/ui/Engine.qml` and its views). Only the host differs:
+All three hosts share one QML application (`package/contents/ui/Engine.qml` and its views). Only the host differs, so pick whichever fits your desktop:
+
+| Host | Best for | Needs |
+|---|---|---|
+| **Standalone app** (`nixdatifier`) | Any desktop: GNOME, COSMIC, XFCE, Cinnamon, Sway, niri, i3, KDE, X11 | Qt 6 |
+| **Plasma widget** | A native panel widget on KDE Plasma 6 | Plasma ≥ 6.0 |
+| **Quickshell panel** | A pill and popup on Hyprland, and other layer-shell compositors | Quickshell |
+
+### Standalone app
+
+A normal window plus a tray icon. Closing the window hides it to the tray, and left-clicking the tray icon shows or hides it. The icon shows the pending-update count and spins while Nixdatifier is working.
+
+```bash
+nix run github:Muddyblack/kde-nixdatifier   # try it without installing
+nixdatifier --autostart                      # start at login (writes ~/.config/autostart)
+```
+
+| Command | Effect |
+|---|---|
+| `nixdatifier` | Open the window, or raise the running one |
+| `nixdatifier --background` | Start in the tray (what autostart uses) |
+| `nixdatifier --toggle` / `--show` / `--hide` | Control the running window |
+| `nixdatifier --refresh` / `--settings` / `--quit` | Refresh, open settings, stop |
+| `nixdatifier --status` | One line of JSON for a bar: `text`, `alt`, `class`, `tooltip`, `generation`, `updates` |
+
+Settings are stored in `~/.config/nixdatifier/standalone.json`.
+
+**Tray support differs by desktop.** The tray icon uses the StatusNotifier standard:
+
+| Desktop | Tray icon |
+|---|---|
+| KDE Plasma, COSMIC, Waybar, XFCE, Cinnamon, i3bar/polybar with a tray | Works out of the box |
+| GNOME | Needs the [AppIndicator](https://extensions.gnome.org/extension/615/appindicator-support/) extension. Without it there is no tray, so the app keeps a normal window: closing it quits, and you start it from the app launcher |
+
+**Panel modules.** `--status` makes a panel button easy. For Waybar:
+
+```jsonc
+"custom/nixdatifier": {
+  "exec": "nixdatifier --status",
+  "return-type": "json",
+  "interval": 60,
+  "format": "{alt} {text}",
+  "on-click": "nixdatifier --toggle"
+}
+```
+
+There is no GNOME Shell extension or COSMIC applet yet; the tray icon and `--status` cover those panels.
+
+### Plasma and Quickshell details
 
 - **Plasma:** the plasmoid. Settings live in Plasma's widget configuration. Preview with `make view`.
 - **Hyprland:** a Quickshell popup with a configurable panel pill (always visible, revealed at the screen edge, or tray only), a tray icon, six popup positions, and edge/side insets to avoid overlapping other widgets. Drag the pill to move it anywhere on its current screen; release to save, or click to open. The popup follows and stays within the screen. Adjust the insets under Design → Hyprland panel (pixels from the selected edges). Settings are stored in `~/.config/nixdatifier/hyprland.json`.
 
-### Starting and stopping the Quickshell panel
+#### Starting and stopping the Quickshell panel
 
 From a checkout:
 
@@ -111,6 +160,7 @@ flowchart TD
     subgraph Hosts
         P["main.qml (Plasma)<br/>PlasmaProcess.qml"]
         Q["NixdatifierShell.qml (Hyprland)<br/>ProcessAdapter.qml"]
+        W["Main.qml (standalone)<br/>ProcessRunner (C++ QProcess)"]
     end
 
     subgraph Core ["Shared QML"]
@@ -123,7 +173,7 @@ flowchart TD
         R["run (cache + lock)"]
         G["generations, details, change-counts"]
         FL["flake-context, flake-probe, dry-run-preview"]
-        T["hash, secrets, store-usage, diskusage, history"]
+        T["hash, secrets, store-usage, devenv, diskusage, history"]
         TE["terminal, terminal-job"]
     end
 
@@ -135,6 +185,7 @@ flowchart TD
 
     P --> E
     Q --> E
+    W --> E
     E --> A --> F
     E --> R
     R --> G & FL & T
@@ -166,7 +217,8 @@ While closed, a configured widget runs one `flake-probe` per check interval (hou
 
 | Dependency | Purpose |
 |---|---|
-| KDE Plasma ≥ 6.0, or Quickshell on Hyprland | Host |
+| Qt 6 (standalone app), KDE Plasma ≥ 6.0, or Quickshell | Host: pick one |
+| `direnv` | *Optional:* the Dev environments tab shows its state when present |
 | `nix` | `store diff-closures`, `path-info`, dry-run previews, hashes (SRI conversion needs Nix ≥ 2.19) |
 | `nix-env`, `nix-collect-garbage` | Generation switching, deletion, and cleanup |
 | `pkexec` (polkit) | Privilege escalation for generation actions and cleanup |
@@ -193,11 +245,70 @@ Run `make help` for all targets. `make test` runs the QML and helper tests in is
 
 ## Install
 
-### KDE Store
+### Standalone app (any Linux distribution with Nix)
+
+Try it immediately without installing:
+
+```bash
+nix run github:Muddyblack/kde-nixdatifier
+```
+
+Install into your Nix profile:
+
+```bash
+nix profile install github:Muddyblack/kde-nixdatifier
+nixdatifier --autostart # registers autostart entry to run in tray at login
+```
+
+### NixOS module
+
+```nix
+# flake.nix
+{
+  inputs.nixdatifier.url = "github:Muddyblack/kde-nixdatifier";
+
+  outputs = { self, nixpkgs, nixdatifier, ... }: {
+    nixosConfigurations.mybox = nixpkgs.lib.nixosSystem {
+      modules = [
+        nixdatifier.nixosModules.default
+        {
+          programs.nixdatifier = {
+            enable = true;
+            autostart = true; # default: true, starts in tray at login
+          };
+        }
+      ];
+    };
+  };
+}
+```
+
+Or install specific packages directly via `environment.systemPackages`:
+- `nixdatifier.packages.${pkgs.system}.nixdatifier` (standalone desktop app)
+- `nixdatifier.packages.${pkgs.system}.default` (KDE Plasma 6 widget)
+- `nixdatifier.packages.${pkgs.system}.hyprland` (Quickshell / Hyprland panel & pill)
+
+### Home Manager module
+
+```nix
+{
+  inputs.nixdatifier.url = "github:Muddyblack/kde-nixdatifier";
+
+  # In your home-manager configuration:
+  imports = [ nixdatifier.homeManagerModules.default ];
+
+  programs.nixdatifier = {
+    enable = true;
+    autostart = true; # default: true, starts in tray at login
+  };
+}
+```
+
+### KDE Store (Plasma widget)
 
 Right-click your panel → *Add Widgets…* → *Get New Widgets…* and search for **Nixdatifier**, or download it from the [KDE Store](https://store.kde.org/p/2360222/).
 
-### Manual install (any distro)
+### Manual install for Plasma 6 (any distro)
 
 ```bash
 git clone https://github.com/Muddyblack/kde-nixdatifier.git
@@ -210,28 +321,6 @@ kpackagetool6 -t Plasma/Applet -u package
 Then add the widget from Plasma's *Add Widgets* panel.
 
 To remove: `kpackagetool6 -t Plasma/Applet -r org.muddyblack.nixosGenerationExplorer`
-
-### NixOS (flake)
-
-```nix
-# flake.nix
-{
-  inputs.nixdatifier.url = "github:Muddyblack/kde-nixdatifier";
-
-  outputs = { self, nixpkgs, nixdatifier, ... }: {
-    nixosConfigurations.mybox = nixpkgs.lib.nixosSystem {
-      modules = [
-        ({ pkgs, ... }: {
-          environment.systemPackages = [
-            nixdatifier.packages.${pkgs.system}.default    # Plasma widget
-            # nixdatifier.packages.${pkgs.system}.hyprland # Hyprland / Quickshell panel
-          ];
-        })
-      ];
-    };
-  }
-}
-```
 
 ### Packaging for distribution
 
@@ -260,7 +349,7 @@ stop when settings close; the Info pane is released when hidden or another tab o
 | **Check updates every (seconds)** | `3600` | Flake input check interval (60–86400). |
 | **Maximum generations shown** | `10` | Generations listed in the timeline (3–200). |
 | **Detect hostname and flake configuration** | `true` | When off, previews need a flake with exactly one NixOS configuration. |
-| **Open on** | `timeline` | Starting view: `timeline`, `updates`, `diff`, `tools`, `secrets`, `hash`, `history`, or `storeusage`. |
+| **Open on** | `timeline` | Starting view: `timeline`, `updates`, `diff`, `tools`, `devenv`, `secrets`, `hash`, `history`, or `storeusage`. |
 
 ### Commands
 

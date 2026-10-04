@@ -1,0 +1,20 @@
+[Desktop Entry]
+Type=Application
+Name=Nixdatifier
+GenericName=Nix Generations and Dev Environments
+Comment=NixOS generations, package diffs, flake updates and dev environments
+Exec=nixdatifier
+Icon=nixdatifier
+Terminal=false
+Categories=System;Utility;
+Keywords=nix;nixos;flake;generations;direnv;updates;
+StartupWMClass=nixdatifier
+Actions=Refresh;Quit;
+
+[Desktop Action Refresh]
+Name=Refresh
+Exec=nixdatifier --refresh
+
+[Desktop Action Quit]
+Name=Quit
+Exec=nixdatifier --quit

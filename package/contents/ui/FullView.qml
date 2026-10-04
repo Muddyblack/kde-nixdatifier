@@ -117,6 +117,12 @@ Pane {
     property var storeUsageResult: null
     property bool isProbingStoreUsage: false
 
+    // ── Development environment tool state ───────────────────────────────────
+    property var devEnvResult: null
+    property var devEnvProjects: []
+    property string systemFlakePath: ""
+    property bool isProbingDevEnv: false
+
     signal viewModeChanged(string mode)
     signal refreshRequested
     signal checkFlakeRequested
@@ -130,6 +136,8 @@ Pane {
     signal hashRequested(string mode, string input)
     signal clearHistoryRequested
     signal storeUsageRequested(string path)
+    signal devEnvRequested(string path)
+    signal devEnvDiscoverRequested
     signal confirmPending
     signal cancelPending
     signal cleanupVariantPicked(string mode)
@@ -161,6 +169,12 @@ Pane {
     property bool enableMotion: true
     property bool enableLiveSwitch: true
     readonly property var tools: [
+        {
+            key: "devenv",
+            label: qsTr("Dev environments"),
+            hint: qsTr("direnv, flakes and shells of any project folder."),
+            glyph: "ic_folder"
+        },
         {
             key: "secrets",
             label: qsTr("Secrets"),
@@ -1003,6 +1017,21 @@ Pane {
                 Layout.rightMargin: fullView.contentMargin
                 Layout.topMargin: 17
                 Layout.bottomMargin: 20
+                DevEnvTab {
+                    anchors.fill: parent
+                    activeViewMode: fullView.activeViewMode
+                    accentColor: fullView.accentColor
+                    textColor: fullView.textColor
+                    fs: fullView.fs
+                    devEnvResult: fullView.devEnvResult
+                    devEnvProjects: fullView.devEnvProjects
+                    systemFlakePath: fullView.systemFlakePath
+                    isProbingDevEnv: fullView.isProbingDevEnv
+
+                    onDevEnvRequested: path => fullView.devEnvRequested(path)
+                    onDiscoverRequested: fullView.devEnvDiscoverRequested()
+                    onCopyToClipboard: t => fullView.copyToClipboard(t)
+                }
                 SecretsTab {
                     anchors.fill: parent
                     activeViewMode: fullView.activeViewMode

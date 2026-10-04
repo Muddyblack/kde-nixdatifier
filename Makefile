@@ -1,4 +1,4 @@
-.PHONY: help view view-h hyprland test install pack tag
+.PHONY: help view view-h hyprland app test install pack tag
 .DEFAULT_GOAL := help
 
 help: ## list targets
@@ -35,6 +35,9 @@ pack: ## build .plasmoid archive
 
 tag: ## bump version, commit, tag, push
 	@./tag.sh
+
+app: ## run the standalone window + tray app (any desktop)
+	nix run path:.#nixdatifier
 
 hyprland: ## run the Quickshell popup, pill and tray
 	nix run path:.#hyprland

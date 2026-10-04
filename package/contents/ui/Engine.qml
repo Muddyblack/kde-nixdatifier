@@ -64,7 +64,7 @@ Item {
     property bool initialized: false
     property int activeJobs: 0
     signal configureRequested
-    readonly property string busyLabel: isBusy ? (currentActionType || qsTr("Running command…")) : isCheckingFlake ? qsTr("Checking flake inputs…") : isDryRunning ? qsTr("Previewing package changes…") : isLoadingDetails || isLoadingPairDiff ? qsTr("Loading package changes…") : isProbingHash ? qsTr("Calculating hash…") : isProbingStoreUsage ? qsTr("Inspecting store path…") : isLoadingSecrets ? qsTr("Inspecting secrets…") : _diskProbeRunning ? qsTr("Measuring Nix store…") : countingChanges ? qsTr("Counting package changes…") : activeJobs > 0 ? qsTr("Refreshing system information…") : ""
+    readonly property string busyLabel: isBusy ? (currentActionType || qsTr("Running command…")) : isCheckingFlake ? qsTr("Checking flake inputs…") : isDryRunning ? qsTr("Previewing package changes…") : isLoadingDetails || isLoadingPairDiff ? qsTr("Loading package changes…") : isProbingHash ? qsTr("Calculating hash…") : isProbingStoreUsage ? qsTr("Inspecting store path…") : isProbingDevEnv ? qsTr("Inspecting development environment…") : isLoadingSecrets ? qsTr("Inspecting secrets…") : _diskProbeRunning ? qsTr("Measuring Nix store…") : countingChanges ? qsTr("Counting package changes…") : activeJobs > 0 ? qsTr("Refreshing system information…") : ""
 
     // ── Script directory ──────────────────────────────────────────────────────
     readonly property string scriptDir: Qt.resolvedUrl("../tools/sh/").toString().replace("file://", "")
@@ -132,11 +132,12 @@ Item {
     property bool isBusy: false
     property bool isProbingHash: false
     property bool isProbingStoreUsage: false
+    property bool isProbingDevEnv: false
     property bool isLoadingSecrets: false
     property bool isLoadingConfigDiff: false
 
     // ── Active spinner state (panel spinner spins if any action or probe is running) ──
-    readonly property bool isSpinning: root.activeJobs > 0 || root._diskProbeRunning || root.isBusy || root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isProbingStoreUsage || root.isLoadingSecrets || root.isLoadingConfigDiff
+    readonly property bool isSpinning: root.activeJobs > 0 || root._diskProbeRunning || root.isBusy || root.isLoadingGens || root.isLoadingDetails || root.isLoadingPairDiff || root.isCheckingFlake || root.isDryRunning || root.isProbingHash || root.isProbingStoreUsage || root.isProbingDevEnv || root.isLoadingSecrets || root.isLoadingConfigDiff
 
     property var detailsCache: ({})
     property string diffMode: "prev"
@@ -222,6 +223,8 @@ Item {
     // ── Store usage tool state ───────────────────────────────────────────────
     // { path, exists, roots: [], referrers: [], closureBytes } | { isError: true, value: string } | null
     property var storeUsageResult: null
+    property var devEnvProjects: []   // [{ dir, name, state }]
+    property var devEnvResult: null   // parsed `devenv inspect`, or { isError, value }
 
     // ── Rebuild history state ────────────────────────────────────────────────
     // Newest first, as returned by the "history list" script.
@@ -534,6 +537,82 @@ Item {
                 referrers: (p[1] || "").split("\n").map(s => s.trim()).filter(s => s),
                 closureBytes: parseInt((p[2] || "").trim(), 10) || 0
             };
+        });
+    }
+
+    // ── Development environments (direnv / flakes), independent of NixOS ──────
+    function discoverDevEnvs() {
+        sh(shq(root.scriptDir + "devenv") + " discover", function (cmd, out, err, code) {
+            if (code !== 0)
+                return;
+            root.devEnvProjects = (out || "").split("\n").filter(l => l.indexOf("\t") > 0).map(function (line) {
+                const f = line.split("\t");
+                return {
+                    dir: f[0],
+                    name: f[0].split("/").filter(x => x).pop() || f[0],
+                    state: f[1]
+                };
+            });
+        });
+    }
+    function parseDevEnv(text) {
+        const parts = (text || "").split("\x1e");
+        const meta = {};
+        for (const line of (parts[0] || "").split("\n")) {
+            const i = line.indexOf("=");
+            if (i > 0)
+                meta[line.slice(0, i)] = line.slice(i + 1);
+        }
+        const list = v => v ? v.split(",") : [];
+        const num = v => parseInt(v, 10) || 0;
+        return {
+            isError: false,
+            dir: meta.dir || "",
+            name: meta.name || "",
+            direnvVersion: meta.direnv || "",
+            envrcPath: meta.envrc_path || "",
+            envrcState: meta.envrc_state || "none",
+            envrcUses: list(meta.envrc_uses),
+            envrc: (parts[1] || "").replace(/\n+$/, ""),
+            cachePath: meta.cache_dir || "",
+            cacheTime: num(meta.cache_mtime),
+            cacheKb: num(meta.cache_size),
+            files: list(meta.files),
+            description: meta.description || "",
+            lockOldest: num(meta.lock_oldest),
+            lockNewest: num(meta.lock_newest),
+            shellsKnown: meta.devshells === "ok",
+            inputs: (parts[2] || "").split("\n").filter(l => l).map(function (line) {
+                const f = line.split("\t");
+                return {
+                    name: f[0],
+                    type: f[1] || "",
+                    source: f[2] || "",
+                    ref: f[3] || "",
+                    rev: f[4] || "",
+                    modified: num(f[5]),
+                    follows: f[6] || ""
+                };
+            }),
+            shells: (parts[3] || "").split("\n").map(s => s.trim()).filter(s => s)
+        };
+    }
+    function probeDevEnv(path) {
+        const clean = String(path || "").trim();
+        root.devEnvResult = null;
+        if (clean === "" || root.isProbingDevEnv)
+            return;
+        root.isProbingDevEnv = true;
+        sh(shq(root.scriptDir + "run") + " cached " + shq("devenv:" + clean) + " 45 -- " + shq(root.scriptDir + "devenv") + " inspect " + shq(clean), function (cmd, out, err, code) {
+            root.isProbingDevEnv = false;
+            if (code !== 0) {
+                root.devEnvResult = {
+                    isError: true,
+                    value: (err || out || qsTr("Could not inspect this folder")).trim()
+                };
+                return;
+            }
+            root.devEnvResult = root.parseDevEnv(out);
         });
     }
 

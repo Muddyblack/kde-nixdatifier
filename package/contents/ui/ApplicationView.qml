@@ -113,6 +113,12 @@ FullView {
     onHashRequested: (mode, input) => engine.runHashProbe(mode, input)
     onClearHistoryRequested: () => engine.clearHistory()
     onStoreUsageRequested: path => engine.probeStoreUsage(path)
+    devEnvResult: engine.devEnvResult
+    devEnvProjects: engine.devEnvProjects
+    systemFlakePath: engine.flakePath
+    isProbingDevEnv: engine.isProbingDevEnv
+    onDevEnvRequested: path => engine.probeDevEnv(path)
+    onDevEnvDiscoverRequested: engine.discoverDevEnvs()
     onDryRunRequested: (inputName, overrideRef) => engine.runDryPreview(inputName, overrideRef)
     onUpdateInputRequested: inputName => engine.runFlakeUpdateInput(inputName)
     onPopOutRequested: engine.pinned = !engine.pinned

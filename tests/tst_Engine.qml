@@ -312,6 +312,37 @@ Item {
             cfg.enableLiveSwitch = true;
             compare(jobs.length, 0);
         }
+        function test_devenv_output_is_parsed() {
+            const text = "dir=/p/app\nname=app\ndirenv=2.37.1\nenvrc_path=/p/app/.envrc\nenvrc_state=blocked\n" + "envrc_uses=use flake,dotenv\ncache_dir=\ncache_mtime=\ncache_size=\nfiles=flake.nix,.envrc\n" + "description=Demo\nlock_inputs=1\nlock_oldest=100\nlock_newest=100\ndevshells=ok\n" + "\x1euse flake\x1enixpkgs\tgithub\tNixOS/nixpkgs\tnixos-unstable\tabc1234\t100\t\x1edefault\nci";
+            const r = core.parseDevEnv(text);
+            compare(r.name, "app");
+            compare(r.envrcState, "blocked");
+            compare(r.envrcUses, ["use flake", "dotenv"]);
+            compare(r.files, ["flake.nix", ".envrc"]);
+            compare(r.cacheTime, 0);
+            compare(r.inputs.length, 1);
+            compare(r.inputs[0].source, "NixOS/nixpkgs");
+            compare(r.inputs[0].rev, "abc1234");
+            compare(r.inputs[0].modified, 100);
+            compare(r.shells, ["default", "ci"]);
+            verify(r.shellsKnown);
+        }
+        function test_devenv_probe_failure_is_an_error() {
+            core.isProbingDevEnv = false;
+            core.probeDevEnv("/nope");
+            verify(core.isProbingDevEnv);
+            jobs[0].callback(jobs[0].cmd, "", "ERROR: not a directory", 2);
+            verify(core.devEnvResult.isError);
+            verify(core.devEnvResult.value.indexOf("not a directory") >= 0);
+            verify(!core.isProbingDevEnv);
+        }
+        function test_devenv_discovery_lists_projects() {
+            core.discoverDevEnvs();
+            jobs[0].callback(jobs[0].cmd, "/home/me/app\tallowed\n/home/me/other\tdenied\n", "", 0);
+            compare(core.devEnvProjects.length, 2);
+            compare(core.devEnvProjects[0].name, "app");
+            compare(core.devEnvProjects[1].state, "denied");
+        }
         function test_hash_error_is_not_success() {
             core.runHashProbe("url", "https://example.invalid");
             jobs[0].callback(jobs[0].cmd, "", "network error", 1);

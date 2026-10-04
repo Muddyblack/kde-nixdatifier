@@ -154,7 +154,14 @@ fi
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
-                json.loads(result.stdout), {"added": 1, "removed": 1, "changed": 2}
+                json.loads(result.stdout),
+                {
+                    "added": 1,
+                    "removed": 1,
+                    "changed": 2,
+                    "addedBytes": 2048,
+                    "removedBytes": 3145728,
+                },
             )
         self.assertEqual(
             args.read_text().splitlines(),
@@ -176,7 +183,14 @@ fi
         result = self.run_helper("change-counts", "/nix/store/same", "/nix/store/same")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(
-            json.loads(result.stdout), {"added": 0, "removed": 0, "changed": 0}
+            json.loads(result.stdout),
+            {
+                "added": 0,
+                "removed": 0,
+                "changed": 0,
+                "addedBytes": 0,
+                "removedBytes": 0,
+            },
         )
 
     def test_conflicting_mutation_is_rejected(self):
@@ -204,7 +218,7 @@ fi
         self.script(
             self.bin / "getent", f"printf 'test:x:1:1:Test:/tmp:{user_shell}\\n'\n"
         )
-        terminal = self.script(self.bin / "test-terminal", 'shift; exec "$@"\n')
+        terminal = self.script(self.bin / "test-terminal", 'shift; exec setsid "$@"\n')
         result = self.run_helper(
             "terminal", terminal, str(work), "pwd > actual-dir; exit 37"
         )
@@ -289,6 +303,89 @@ fi
         new = self.run_helper("flake-context", str(flake)).stdout.splitlines()
         self.assertEqual(old[0], str(flake))
         self.assertNotEqual(old[1], new[1])
+
+    def test_devenv_discover_lists_known_projects_newest_first(self):
+        data = self.root / "data"
+        old, new, gone, blocked = (self.root / n for n in ("old", "new", "gone", "blocked"))
+        for project in (old, new, blocked):
+            project.mkdir()
+            (project / ".envrc").write_text("use flake\n")
+        for state, name, project, stamp in (
+            ("allow", "a", old, 1_000),
+            ("allow", "b", new, 2_000),
+            ("allow", "c", gone, 3_000),
+            ("deny", "d", blocked, 4_000),
+        ):
+            entry = data / "direnv" / state / name
+            entry.parent.mkdir(parents=True, exist_ok=True)
+            entry.write_text(f"{project}/.envrc\n")
+            os.utime(entry, (stamp, stamp))
+        self.env["XDG_DATA_HOME"] = str(data)
+        result = self.run_helper("devenv", "discover")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.splitlines(),
+            [f"{blocked}\tdenied", f"{new}\tallowed", f"{old}\tallowed"],
+        )
+
+    def test_devenv_inspect_reports_direnv_flake_and_lock(self):
+        project = self.root / "my app"
+        project.mkdir()
+        (project / ".envrc").write_text("use flake\ndotenv\n")
+        (project / "flake.nix").write_text('{\n  description = "A demo shell";\n}\n')
+        (project / ".direnv").mkdir()
+        (project / "flake.lock").write_text(json.dumps({"nodes": {
+            "root": {"inputs": {"nixpkgs": "nixpkgs", "utils": ["nixpkgs"]}},
+            "nixpkgs": {
+                "original": {"type": "github", "owner": "NixOS", "repo": "nixpkgs", "ref": "nixos-unstable"},
+                "locked": {"type": "github", "rev": "abcdef0123456789", "lastModified": 1700000000},
+            },
+        }}))
+        self.script(self.bin / "direnv", """
+case "$1" in
+    version) echo 2.37.1 ;;
+    status) echo "Found RC path $PWD/.envrc"; echo "Found RC allowed 1" ;;
+esac
+""")
+        self.script(self.bin / "nix", "printf '[\"default\",\"ci\"]'\n")
+        result = self.run_helper("devenv", "inspect", str(project))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        meta, envrc, locks, shells = result.stdout.split("\x1e")
+        facts = dict(line.split("=", 1) for line in meta.splitlines())
+        self.assertEqual(facts["name"], "my app")
+        self.assertEqual(facts["direnv"], "2.37.1")
+        self.assertEqual(facts["envrc_state"], "blocked")
+        self.assertEqual(facts["envrc_uses"], "use flake,dotenv")
+        self.assertEqual(facts["description"], "A demo shell")
+        self.assertEqual(facts["lock_inputs"], "2")
+        self.assertEqual(facts["lock_oldest"], "1700000000")
+        self.assertEqual(facts["devshells"], "ok")
+        self.assertIn("flake.nix", facts["files"].split(","))
+        self.assertEqual(envrc, "use flake\ndotenv")
+        self.assertEqual(
+            locks.splitlines(),
+            [
+                "nixpkgs\tgithub\tNixOS/nixpkgs\tnixos-unstable\tabcdef0\t1700000000\t",
+                "utils\tfollows\t\t\t\t0\tnixpkgs",
+            ],
+        )
+        self.assertEqual(shells.splitlines(), ["default", "ci"])
+
+    def test_devenv_handles_a_plain_folder(self):
+        project = self.root / "plain"
+        project.mkdir()
+        self.script(self.bin / "direnv", 'case "$1" in version) echo 2.37.1 ;; esac\n')
+        result = self.run_helper("devenv", "inspect", str(project))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        facts = dict(line.split("=", 1) for line in result.stdout.split("\x1e")[0].splitlines())
+        self.assertEqual(facts["envrc_state"], "none")
+        self.assertEqual(facts["files"], "")
+        self.assertEqual(facts["devshells"], "")
+
+    def test_devenv_rejects_missing_directories(self):
+        result = self.run_helper("devenv", "inspect", str(self.root / "missing"))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not a directory", result.stderr)
 
 
 if __name__ == "__main__":

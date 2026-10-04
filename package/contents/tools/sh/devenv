@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+# Usage: devenv discover
+#        devenv inspect <project-dir>
+#
+# Describes development environments (direnv, Nix flakes, shell.nix, devenv).
+# Works on any distro; nothing here needs NixOS. Every probe is read-only and
+# offline: no .envrc is executed and nothing is fetched.
+#
+# discover  prints one "<dir>\t<state>" line per project direnv already knows
+#           (state: allowed | denied), newest first.
+# inspect   prints four \x1e-separated fields:
+#   [0] key=value metadata lines
+#   [1] the first lines of the .envrc
+#   [2] flake.lock root inputs, TSV: name type source ref rev lastModified follows
+#   [3] devShells exposed by the flake for this system, one per line
+set -u
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:${HOME:-/root}/.nix-profile/bin"
+
+data_home="${XDG_DATA_HOME:-${HOME:-/root}/.local/share}"
+
+discover() {
+    local state file rc
+    for state in allow deny; do
+        for file in "$data_home"/direnv/"$state"/*; do
+            [ -f "$file" ] || continue
+            rc=$(head -n 1 "$file" 2>/dev/null)
+            [[ "$rc" == /* && -f "$rc" ]] || continue
+            printf '%s\t%s\t%s\n' "$(stat -c %Y "$file")" "$(dirname -- "$rc")" "$([ "$state" = allow ] && echo allowed || echo denied)"
+        done
+    done | sort -rn | awk -F'\t' '!seen[$2]++ {print $2 "\t" $3}'
+}
+
+inspect() {
+    local dir="$1"
+    [[ "$dir" == "~" || "$dir" == "~/"* ]] && dir="${HOME:-/root}${dir#\~}"
+    dir=$(realpath -m -- "$dir" 2>/dev/null) || dir="$1"
+    [ -d "$dir" ] || { echo "ERROR: not a directory: $1" >&2; exit 2; }
+    cd -- "$dir" || exit 2
+
+    local kv=() envrc="" rc_path="" rc_state="none"
+    kv+=("dir=$dir" "name=$(basename -- "$dir")")
+
+    # ── direnv ────────────────────────────────────────────────────────────────
+    if command -v direnv >/dev/null 2>&1; then
+        kv+=("direnv=$(direnv version 2>/dev/null | head -n 1)")
+        # `direnv status` only reads: it never evaluates the .envrc. It also
+        # walks up the tree, exactly like the shell hook does.
+        local status
+        status=$(direnv status 2>/dev/null)
+        rc_path=$(printf '%s\n' "$status" | sed -n 's/^Found RC path //p' | head -n 1)
+        case "$(printf '%s\n' "$status" | sed -n 's/^Found RC allowed //p' | head -n 1)" in
+            0 | true) rc_state=allowed ;;
+            1 | false) rc_state=blocked ;;
+            2) rc_state=denied ;;
+        esac
+    else
+        kv+=("direnv=")
+        # Without direnv we can still tell whether the folder is set up for it.
+        local up="$dir"
+        while [ "$up" != "/" ]; do
+            [ -f "$up/.envrc" ] && { rc_path="$up/.envrc"; rc_state=unknown; break; }
+            up=$(dirname -- "$up")
+        done
+    fi
+    kv+=("envrc_path=$rc_path" "envrc_state=$rc_state")
+
+    if [ -n "$rc_path" ] && [ -r "$rc_path" ]; then
+        envrc=$(head -n 24 -- "$rc_path" 2>/dev/null)
+        # Which environment providers the .envrc asks for.
+        local uses=() word
+        for word in "use flake" "use nix" "use devenv" "use asdf" "use mise" "layout python" "layout node" "layout poetry" "dotenv" "source_env" "watch_file"; do
+            grep -Eq "^[[:space:]]*${word}([[:space:]]|\$)" "$rc_path" 2>/dev/null && uses+=("$word")
+        done
+        local IFS=,
+        kv+=("envrc_uses=${uses[*]:-}")
+        unset IFS
+    else
+        kv+=("envrc_uses=")
+    fi
+
+    # ── cached environment (nix-direnv / direnv layouts) ──────────────────────
+    local layout="${rc_path:+$(dirname -- "$rc_path")}"
+    layout="${layout:-$dir}/.direnv"
+    if [ -d "$layout" ]; then
+        local newest
+        newest=$(find "$layout" -maxdepth 2 -type l -printf '%T@\n' 2>/dev/null | sort -rn | head -n 1)
+        newest="${newest%.*}"
+        kv+=("cache_dir=$layout" "cache_mtime=${newest:-$(stat -c %Y "$layout")}")
+        kv+=("cache_size=$(du -sk "$layout" 2>/dev/null | cut -f1)")
+    else
+        kv+=("cache_dir=" "cache_mtime=" "cache_size=")
+    fi
+
+    # ── project files ─────────────────────────────────────────────────────────
+    local files=() f
+    for f in flake.nix flake.lock shell.nix default.nix devenv.nix devenv.yaml devbox.json mise.toml .tool-versions .envrc .env Dockerfile compose.yaml; do
+        [ -e "$f" ] && files+=("$f")
+    done
+    local IFS=,
+    kv+=("files=${files[*]:-}")
+    unset IFS
+
+    # ── flake ─────────────────────────────────────────────────────────────────
+    local description=""
+    if [ -f flake.nix ]; then
+        description=$(sed -n 's/^[[:space:]]*description[[:space:]]*=[[:space:]]*"\(.*\)";.*/\1/p' flake.nix | head -n 1)
+    fi
+    kv+=("description=$description")
+
+    local locks="" shells="" lock_count=0 lock_oldest="" lock_newest=""
+    if [ -f flake.lock ] && command -v jq >/dev/null 2>&1; then
+        locks=$(jq -r '
+            . as $l
+            | ($l.nodes.root.inputs // {}) | to_entries[]
+            | . as $e
+            | (if ($e.value | type) == "array" then null else $l.nodes[$e.value] end) as $n
+            | [
+                $e.key,
+                (if $n == null then "follows" else ($n.locked.type // "") end),
+                (if $n == null then ""
+                 elif $n.original.owner then "\($n.original.owner)/\($n.original.repo // "")"
+                 else ($n.original.url // $n.original.path // $n.original.repo // "") end),
+                (if $n == null then "" else ($n.original.ref // "") end),
+                (if $n == null then "" else (($n.locked.rev // "")[0:7]) end),
+                (if $n == null then "0" else (($n.locked.lastModified // 0) | tostring) end),
+                (if ($e.value | type) == "array" then ($e.value | join("/")) else "" end)
+              ] | @tsv' flake.lock 2>/dev/null)
+        lock_count=$(printf '%s' "$locks" | grep -c . || true)
+        lock_oldest=$(printf '%s\n' "$locks" | awk -F'\t' '$6 > 0 {print $6}' | sort -n | head -n 1)
+        lock_newest=$(printf '%s\n' "$locks" | awk -F'\t' '$6 > 0 {print $6}' | sort -n | tail -n 1)
+    fi
+    kv+=("lock_inputs=$lock_count" "lock_oldest=$lock_oldest" "lock_newest=$lock_newest")
+
+    # devShells come from evaluating the flake. That can be slow on a cold
+    # cache, so it is bounded and never allowed to hit the network.
+    local shells_state=""
+    if [ -f flake.nix ] && command -v nix >/dev/null 2>&1; then
+        local arch
+        arch="$(uname -m)-linux"
+        if shells=$(timeout --kill-after=2s 25s nix eval --offline --json ".#devShells.$arch" --apply builtins.attrNames 2>/dev/null); then
+            shells=$(printf '%s' "$shells" | jq -r '.[]' 2>/dev/null)
+            shells_state=ok
+        else
+            shells=""
+            shells_state=unavailable
+        fi
+    fi
+    kv+=("devshells=$shells_state")
+
+    printf '%s\n' "${kv[@]}"
+    printf '\x1e%s' "$envrc"
+    printf '\x1e%s' "$locks"
+    printf '\x1e%s' "$shells"
+}
+
+case "${1:-}" in
+    discover) discover ;;
+    inspect) inspect "${2:?missing project directory}" ;;
+    *) echo "usage: devenv discover | inspect <dir>" >&2; exit 2 ;;
+esac
