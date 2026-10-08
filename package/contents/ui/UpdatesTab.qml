@@ -18,6 +18,7 @@ Item {
     required property var flakeUpdates
     required property string lastFlakeCheckTime
     required property var dryRunCache
+    property var releaseNotesCache: ({})
     required property bool isDryRunning
     required property string iconStyle
     property bool isBusy: false
@@ -26,6 +27,7 @@ Item {
     property bool showPackageIcons: true
     property var openPreviews: ({})
     signal dryRunRequested(string inputName, string overrideRef)
+    signal releaseNotesRequested(string inputName, bool force)
     signal updateInputRequested(string inputName)
     signal checkRequested
     signal copyToClipboard(string text)
@@ -37,6 +39,8 @@ Item {
         const next = Object.assign({}, openPreviews);
         next[input.input] = !next[input.input];
         openPreviews = next;
+        if (next[input.input])
+            releaseNotesRequested(input.input, false);
         if (next[input.input] && !dryRunCache[input.input])
             dryRunRequested(input.input, input.overrideRef);
     }
@@ -221,6 +225,20 @@ Item {
                             Layout.topMargin: visible ? 10 : 0
                             visible: card.opened
                             spacing: 10
+                            Rectangle {
+                                Layout.fillWidth: true
+                                implicitHeight: 1
+                                color: "#08ffffff"
+                            }
+                            ReleaseNotes {
+                                objectName: "notes-" + card.modelData.input
+                                Layout.fillWidth: true
+                                entry: root.releaseNotesCache[card.modelData.input] || null
+                                fs: root.fs
+                                textColor: root.textColor
+                                accentColor: root.accentColor
+                                onRetryRequested: root.releaseNotesRequested(card.modelData.input, true)
+                            }
                             Rectangle {
                                 Layout.fillWidth: true
                                 implicitHeight: 1

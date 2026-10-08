@@ -69,6 +69,7 @@ FullView {
     isLoadingPairDiff: engine.isLoadingPairDiff
     configDiffCache: engine.configDiffCache
     dryRunCache: engine.dryRunCache
+    releaseNotesCache: engine.releaseNotesCache
     isDryRunning: engine.isDryRunning
     diffViewMode: engine.settings.diffViewMode || "compact"
     iconCache: engine.iconCache
@@ -131,6 +132,7 @@ FullView {
     isProbingHealth: engine.isProbingHealth
     onHealthRequested: force => engine.probeHealth(force)
     onDryRunRequested: (inputName, overrideRef) => engine.runDryPreview(inputName, overrideRef)
+    onReleaseNotesRequested: (inputName, force) => engine.loadReleaseNotes(inputName, force)
     onUpdateInputRequested: inputName => engine.runFlakeUpdateInput(inputName)
     onPopOutRequested: engine.pinned = !engine.pinned
     onConfigureRequested: engine.configureRequested()

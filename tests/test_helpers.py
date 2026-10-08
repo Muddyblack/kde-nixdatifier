@@ -160,6 +160,62 @@ fi
         self.script(self.bin / "git", "exit 124\n")
         self.assertIn("timed out after 40s", self.run_helper("flake-probe", str(self.root)).stdout)
 
+    def test_release_notes_lists_new_releases_and_commits(self):
+        old, new = "a" * 40, "b" * 40
+        commits = [
+            {"sha": new, "html_url": "https://github.com/o/r/commit/" + new,
+             "author": {"login": "dev"},
+             "commit": {"message": "fix: thing\n\nlong body",
+                        "committer": {"date": "2026-02-02T00:00:00Z"}}},
+            {"sha": old, "html_url": "", "author": None,
+             "commit": {"message": "old", "committer": {"date": "2026-01-01T00:00:00Z"}}},
+        ]
+        releases = [
+            {"tag_name": "v2", "name": "", "draft": False, "prerelease": False,
+             "published_at": "2026-02-01T00:00:00Z", "html_url": "u2", "body": "## Notes ##\r\n<!-- x -->hi `code`"},
+            {"tag_name": "draft", "draft": True, "published_at": "2026-02-01T00:00:00Z"},
+            {"tag_name": "v1", "draft": False, "published_at": "2025-12-01T00:00:00Z"},
+        ]
+        (self.root / "commits.json").write_text(json.dumps(commits))
+        (self.root / "releases.json").write_text(json.dumps(releases))
+        log = self.root / "curl-log"
+        self.script(self.bin / "curl", f"""
+url="${{@: -1}}"; out=""; hdr=""
+while [ $# -gt 0 ]; do
+    case "$1" in -o) out="$2"; shift ;; -D) hdr="$2"; shift ;; esac
+    shift
+done
+echo "$url" >> '{log}'
+case "$url" in
+    *"/commits?"*) cp '{self.root}/commits.json' "$out"; printf 'link: <x>; rel="next"\r\n' > "$hdr" ;;
+    *) cp '{self.root}/releases.json' "$out"; : > "$hdr" ;;
+esac
+printf 200
+""")
+        since = "1767225600"  # 2026-01-01T00:00:00Z, the old revision's date
+        result = self.run_helper("release-notes", "https://github.com/o/r.git", old, new, since)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        data = json.loads(result.stdout)
+        self.assertEqual(data["compareUrl"], f"https://github.com/o/r/compare/{old}...{new}")
+        self.assertEqual([r["tag"] for r in data["releases"]], ["v2"])
+        self.assertEqual(data["releases"][0]["body"], "**Notes**\nhi code")
+        self.assertEqual([c["message"] for c in data["commits"]], ["fix: thing"])
+        self.assertTrue(data["moreCommits"])
+        self.assertIn(f"sha={new}&since=2026-01-01T00:00:01Z", log.read_text())
+
+        self.script(self.bin / "curl", """
+while [ $# -gt 0 ]; do [ "$1" = -D ] && printf 'x-ratelimit-remaining: 0\r\n' > "$2"; shift; done
+printf 403
+""")
+        result = self.run_helper("release-notes", "https://github.com/o/r", old, new, since)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("rate limit", result.stderr)
+
+        gitlab = json.loads(self.run_helper("release-notes", "git+https://gitlab.com/g/sub/r.git", old, new, "0").stdout)
+        self.assertEqual(gitlab["compareUrl"], f"https://gitlab.com/g/sub/r/-/compare/{old}...{new}")
+        other = json.loads(self.run_helper("release-notes", "https://git.sr.ht/~u/r", old, new, "0").stdout)
+        self.assertEqual(other["compareUrl"], "")
+
     def test_change_counts_use_closure_direction_and_reuse_cache(self):
         args = self.root / "count-args"
         self.script(

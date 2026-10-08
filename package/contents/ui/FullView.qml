@@ -99,6 +99,7 @@ Pane {
     property bool isLoadingPairDiff: false
     property var configDiffCache: ({})
     property var dryRunCache: ({})
+    property var releaseNotesCache: ({})
     property bool isDryRunning: false
     property bool isProbingHash: false
     property string diffViewMode: "compact"   // "compact" | "detailed"
@@ -158,6 +159,7 @@ Pane {
     signal cancelCleanup
     signal compareRequested(int genA, int genB)
     signal dryRunRequested(string inputName, string overrideRef)
+    signal releaseNotesRequested(string inputName, bool force)
     signal updateInputRequested(string inputName)
     signal popOutRequested
     signal configureRequested
@@ -653,10 +655,12 @@ Pane {
                 flakeUpdates: fullView.flakeUpdates
                 lastFlakeCheckTime: fullView.lastFlakeCheckTime
                 dryRunCache: fullView.dryRunCache
+                releaseNotesCache: fullView.releaseNotesCache
                 isDryRunning: fullView.isDryRunning
                 iconStyle: fullView.iconStyle
 
                 onDryRunRequested: (inputName, overrideRef) => fullView.dryRunRequested(inputName, overrideRef)
+                onReleaseNotesRequested: (inputName, force) => fullView.releaseNotesRequested(inputName, force)
                 onUpdateInputRequested: inputName => fullView.updateInputRequested(inputName)
             }
 

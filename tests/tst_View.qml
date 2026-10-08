@@ -238,6 +238,59 @@ Item {
             verify(view.openPreviews.nixpkgs);
             core.isDryRunning = false;
         }
+        function test_release_notes_render_in_open_card() {
+            core.activeViewMode = "updates";
+            core.flakeUpdates = [
+                {
+                    input: "hyprland",
+                    oldRev: "abc",
+                    newRev: "def",
+                    overrideRef: "github:hyprwm/Hyprland/def",
+                    url: "https://github.com/hyprwm/Hyprland"
+                }
+            ];
+            core.dryRunCache = {
+                hyprland: {
+                    status: "ok",
+                    packages: []
+                }
+            };
+            core.releaseNotesCache = {
+                hyprland: {
+                    status: "ok",
+                    compareUrl: "https://github.com/hyprwm/Hyprland/compare/abc...def",
+                    releases: [
+                        {
+                            tag: "v0.56.0",
+                            name: "",
+                            date: "2026-07-20T08:36:24Z",
+                            url: "https://example.invalid",
+                            body: "## New"
+                        }
+                    ],
+                    commits: [
+                        {
+                            sha: "5a78b5e927345860",
+                            message: "keybinds: fix",
+                            author: "dev",
+                            date: "2026-10-06T13:20:44Z",
+                            url: "https://example.invalid"
+                        }
+                    ],
+                    moreCommits: true
+                }
+            };
+            wait(30);
+            const view = findChild(app, "updatesView");
+            mouseClick(findChild(view, "preview-hyprland"));
+            const notes = findChild(view, "notes-hyprland");
+            verify(notes);
+            tryVerify(() => notes.visible);
+            compare(notes.releases.length, 1);
+            compare(notes.commits.length, 1);
+            verify(findChild(notes, "compareLink").visible);
+            core.releaseNotesCache = {};
+        }
         function test_compare_selection_preserves_direction() {
             app.openCompareInDiffTab(661, 660);
             compare(core.activeViewMode, "diff");

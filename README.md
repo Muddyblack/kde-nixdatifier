@@ -56,7 +56,7 @@
 - **Package changes** — Expand any generation to see what changed against the previous one (or the booted one), with versions, size deltas, store paths, app icons, and homepage links.
 - **Compare** — Diff any two generations with `nix store diff-closures`.
 - **Configuration changes** — When your config lives in a Git repository, each generation records its commit, so you can see the `.nix` changes between generations.
-- **Flake updates** — Checks your flake inputs against their upstream repositories, notifies you of updates, and can preview the resulting package changes (`nix build --dry-run`, lock file untouched) or update a single input.
+- **Flake updates** — Checks your flake inputs against their upstream repositories, notifies you of updates, and can preview the resulting package changes (`nix build --dry-run`, lock file untouched) or update a single input. Expanding an input shows what changed upstream: GitHub releases with their notes, the newest commits, and a link to the full diff (set `GITHUB_TOKEN` to lift GitHub's anonymous limit of 60 requests per hour).
 - **Tools**
   - **Secrets** — Deployed secrets (`/run/secrets`, `/run/agenix.d`) and your encrypted source file: format, recipients, freshness.
   - **Hash calculator** — Hashes for URLs, archives, GitHub revisions, local files, and store paths, in both Nix and SRI form, with a ready-to-paste fetcher snippet.

@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Usage: release-notes <repo-url> <old-rev> <new-rev> <old-lastModified>
+#
+# Describes what changed upstream between two revisions of a flake input and
+# prints one JSON object:
+#
+#   { "host": "github"|"gitlab"|"",
+#     "compareUrl": "...",               # "" when the host has no compare view
+#     "releases": [{ tag, name, date, url, body }],   # newest first
+#     "commits":  [{ sha, message, author, date, url }],  # newest first
+#     "moreCommits": true|false }        # more commits exist than listed
+#
+# Releases and commits are only fetched from GitHub (two API calls). Commits
+# are those reachable from <new-rev> and dated after <old-rev>. Set
+# GITHUB_TOKEN (or GH_TOKEN) to lift the anonymous rate limit of 60 calls/hour.
+# On failure the reason goes to stderr and the exit status is non-zero, so the
+# caller's cache never keeps a failed result.
+set -u
+
+url="${1:-}" old="${2:-}" new="${3:-}" since="${4:-0}"
+if [ -z "$url" ] || [ -z "$old" ] || [ -z "$new" ]; then
+    echo "usage: release-notes <repo-url> <old-rev> <new-rev> <old-lastModified>" >&2
+    exit 2
+fi
+
+export PATH="$PATH:/run/current-system/sw/bin:/nix/var/nix/profiles/default/bin:/root/.nix-profile/bin"
+command -v jq >/dev/null 2>&1 || { echo "jq not on PATH" >&2; exit 1; }
+
+url="${url#git+}"
+url="${url%.git}"
+url="${url%/}"
+host="" owner="" repo=""
+if [[ "$url" =~ ^https?://github\.com/([^/]+)/([^/?#]+) ]]; then
+    host=github owner="${BASH_REMATCH[1]}" repo="${BASH_REMATCH[2]}"
+elif [[ "$url" =~ ^https?://gitlab\.com/(.+)$ ]]; then
+    host=gitlab
+fi
+
+empty() {
+    jq -cn --arg host "$1" --arg compare "$2" \
+        '{host: $host, compareUrl: $compare, releases: [], commits: [], moreCommits: false}'
+}
+
+case "$host" in
+    gitlab) empty gitlab "$url/-/compare/$old...$new"; exit 0 ;;
+    github) ;;
+    *) empty "" ""; exit 0 ;;
+esac
+
+command -v curl >/dev/null 2>&1 || { echo "curl not on PATH" >&2; exit 1; }
+
+api="https://api.github.com/repos/$owner/$repo"
+compare="https://github.com/$owner/$repo/compare/$old...$new"
+token="${GITHUB_TOKEN:-${GH_TOKEN:-}}"
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# fetch <name> <url>: body to $tmp/<name>, headers to $tmp/<name>.h
+fetch() {
+    local auth=()
+    [ -n "$token" ] && auth=(-H "Authorization: Bearer $token")
+    local code
+    code=$(curl --silent --location --connect-timeout 5 --max-time 20 \
+        -H 'Accept: application/vnd.github+json' "${auth[@]}" \
+        -D "$tmp/$1.h" -o "$tmp/$1" -w '%{http_code}' "$2") || {
+        echo "Could not reach GitHub" >&2; return 1; }
+    case "$code" in
+        200) return 0 ;;
+        403|429)
+            if grep -qi '^x-ratelimit-remaining: *0' "$tmp/$1.h"; then
+                echo "GitHub API rate limit reached. Try again later, or set GITHUB_TOKEN." >&2
+            else
+                echo "GitHub refused the request (HTTP $code)" >&2
+            fi
+            return 1 ;;
+        404) echo "Repository not found on GitHub (private?)" >&2; return 1 ;;
+        *) echo "GitHub request failed (HTTP $code)" >&2; return 1 ;;
+    esac
+}
+
+# Commits dated exactly at lastModified are the old revision itself.
+since_iso=$(date -u -d "@$((since + 1))" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "1970-01-01T00:00:00Z")
+fetch commits "$api/commits?sha=$new&since=$since_iso&per_page=30" || exit 1
+fetch releases "$api/releases?per_page=10" || exit 1
+
+more=false
+grep -qi '^link:.*rel="next"' "$tmp/commits.h" && more=true
+
+jq -cn \
+    --arg compare "$compare" --arg since "$since_iso" --arg old "$old" \
+    --argjson more "$more" \
+    --slurpfile commits "$tmp/commits" --slurpfile releases "$tmp/releases" '
+    def clip($n): if length > $n then .[0:$n] + "…" else . end;
+    {
+        host: "github",
+        compareUrl: $compare,
+        releases: [$releases[0][]
+            | select((.draft | not) and (.published_at // "") > $since)
+            | {
+                tag: .tag_name,
+                name: (.name // "" | if . == "" then null else . end),
+                date: .published_at,
+                url: .html_url,
+                prerelease: .prerelease,
+                body: ((.body // "") | gsub("\r"; "") | gsub("<!--[\\s\\S]*?-->"; "")
+                    # Headings and code spans render oversized in a small popup.
+                    | gsub("(?m)^#{1,6} +(?<h>.+?) *#*$"; "**\(.h)**") | gsub("`"; "")
+                    | clip(1500))
+            }][0:5],
+        commits: [$commits[0][]
+            | select(.sha != $old)
+            | {
+                sha: .sha,
+                message: (.commit.message | split("\n")[0] | clip(200)),
+                author: (.author.login // .commit.author.name // ""),
+                date: .commit.committer.date,
+                url: .html_url
+            }],
+        moreCommits: $more
+    }'

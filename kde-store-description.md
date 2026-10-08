@@ -9,6 +9,7 @@ Not using Plasma? The same app also runs as a standalone tray app on GNOME, COSM
 
 ### What's new in this release
 
+*   **Release notes for flake updates:** expand a pending input to see what changed upstream: GitHub releases with their changelogs, the newest commits, and a link to the full diff.
 *   **Dev environments tool:** pick any project folder, or one direnv already knows, and see whether its `.envrc` is allowed, what it loads, how old the cached environment is, its flake inputs and how stale they are, and its dev shells. Works on any distribution.
 *   **Standalone tray app** for any desktop, plus NixOS and Home Manager modules (GitHub).
 *   **Redesigned interface** with four tabs: Generations, Updates, Compare, and Tools.
@@ -29,7 +30,7 @@ Not using Plasma? The same app also runs as a standalone tray app on GNOME, COSM
 *   **Package changes:** added, upgraded, and removed packages for any generation or between any two, with versions, size changes, store paths, and homepage links.
 *   **Boot & rollback controls:** activate a generation now, set it for next boot, or delete old ones through Polkit/`pkexec`. The booted and next-boot generations are protected.
 *   **Configuration changes:** if your config is in Git, see the `.nix` changes between generations.
-*   **Flake update tracker:** checks your flake inputs upstream, notifies you, previews the package changes before you update, and updates single inputs.
+*   **Flake update tracker:** checks your flake inputs upstream, notifies you, shows upstream release notes and commits, previews the package changes before you update, and updates single inputs.
 *   **Nix store:** store size, free and reclaimable space, and one-click garbage collection.
 *   **Secrets inspector:** deployed `sops-nix` / `agenix` secrets and your encrypted source file (format, recipients, freshness). Nothing is decrypted.
 *   **Custom commands:** up to four terminal shortcuts (like `nixos-rebuild switch`), run from your flake directory.
@@ -43,6 +44,7 @@ The helper scripts use standard tools that are normally present on NixOS:
 *   `nix`, `nix-env`, `nix-store` (Nix ≥ 2.19 for SRI hash conversion)
 *   `pkexec` / polkit (generation actions and cleanup)
 *   `jq` and `git` (flake update checks, history, configuration diffs)
+*   `curl` (release notes for GitHub inputs; set `GITHUB_TOKEN` to lift GitHub's limit of 60 requests per hour)
 *   Optional: `inotify-tools` (instant sync between widget instances) and `libnotify` (notifications)
 
 ---

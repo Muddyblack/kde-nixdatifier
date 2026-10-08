@@ -91,6 +91,7 @@ Item {
             if (changed) {
                 root.flakeEpoch++;
                 root.dryRunCache = ({});
+                root.releaseNotesCache = ({});
                 root.flakeUpdates = [];
                 root._lastFlakeCacheTs = 0;
                 root.resolvedFlakePath = path;
@@ -185,6 +186,11 @@ Item {
     // package: { action, name, oldVersion, newVersion }
     property var dryRunCache: ({})
     property bool isDryRunning: false
+
+    // ── Upstream release notes per flake input ────────────────────────────────
+    // key = input name, value = { status: "ok"|"error"|"loading", revisionKey,
+    //   compareUrl, releases: [...], commits: [...], moreCommits, errorMsg }
+    property var releaseNotesCache: ({})
 
     // ── System info ───────────────────────────────────────────────────────────
     property string hostname: ""
@@ -1194,6 +1200,7 @@ Item {
                 revisionKey: oldRev + "\n" + newRev,
                 oldRev: oldRev.substring(0, 7),
                 newRev: newRev.substring(0, 7),
+                oldDateTs: oldDateTs,
                 oldDate: oldDateTs > 0 ? new Date(oldDateTs * 1000).toLocaleDateString() : "",
                 newDate: qsTr("latest"),
                 url: url.replace(/\.git$/, ""),
@@ -1208,6 +1215,13 @@ Item {
                 validPreviews[u.input] = root.dryRunCache[u.input];
         }
         root.dryRunCache = validPreviews;
+        const validNotes = {};
+        for (const u of updates) {
+            const notes = root.releaseNotesCache[u.input];
+            if (notes && notes.revisionKey === u.revisionKey)
+                validNotes[u.input] = notes;
+        }
+        root.releaseNotesCache = validNotes;
         if (JSON.stringify(root.flakeUpdates) !== JSON.stringify(updates))
             root.flakeUpdates = updates;
         root.lastFlakeCheckTime = Qt.formatTime(new Date(), "hh:mm");
@@ -1343,6 +1357,65 @@ Item {
             root.dryRunCache = updated;
             root.loadIcons(pkgs);
             root.loadMeta(pkgs);
+        });
+    }
+
+    // What changed upstream between the locked and the latest revision: GitHub
+    // releases and commits (see tools/sh/release-notes). Loaded on demand when
+    // a card opens, because anonymous GitHub API calls are limited to 60/hour.
+    function loadReleaseNotes(inputName, force) {
+        if (!root.isNixOS)
+            return;
+        const update = root.flakeUpdates.find(u => u.input === inputName);
+        if (!update || !update.url || !update.revisionKey)
+            return;
+        const current = root.releaseNotesCache[inputName];
+        if (current && current.revisionKey === update.revisionKey && (current.status !== "error" || !force))
+            return;
+        const revs = update.revisionKey.split("\n");
+        const revisionKey = update.revisionKey;
+        const epoch = root.flakeEpoch;
+        const setEntry = entry => {
+            const next = Object.assign({}, root.releaseNotesCache);
+            next[inputName] = Object.assign({
+                revisionKey: revisionKey,
+                compareUrl: "",
+                releases: [],
+                commits: [],
+                moreCommits: false,
+                errorMsg: ""
+            }, entry);
+            root.releaseNotesCache = next;
+        };
+        setEntry({
+            status: "loading"
+        });
+        // Results for a revision pair never change, so share them for a day.
+        sh("timeout --kill-after=5s 60s " + shq(root.scriptDir + "run") + " cached notes 86400 -- " + shq(root.scriptDir + "release-notes") + " " + shq(update.url) + " " + shq(revs[0]) + " " + shq(revs[1]) + " " + shq(String(update.oldDateTs || 0)), function (cmd, out, err, code) {
+            if (epoch !== root.flakeEpoch || !root.flakeUpdates.some(u => u.input === inputName && u.revisionKey === revisionKey))
+                return;
+            let data = null;
+            if (code === 0) {
+                try {
+                    data = JSON.parse((out || "").trim());
+                } catch (e) {
+                    data = null;
+                }
+            }
+            if (!data) {
+                setEntry({
+                    status: "error",
+                    errorMsg: code === 124 || code === 137 ? qsTr("Timed out while asking upstream for release notes.") : ((err || out || "").trim() || qsTr("Could not load release notes."))
+                });
+                return;
+            }
+            setEntry({
+                status: "ok",
+                compareUrl: data.compareUrl || "",
+                releases: data.releases || [],
+                commits: data.commits || [],
+                moreCommits: !!data.moreCommits
+            });
         });
     }
 
