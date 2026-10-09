@@ -48,7 +48,7 @@ stdenv.mkDerivation {
 
   meta = {
     description = "NixOS generations, package diffs, flake updates and dev environments in a tray app";
-    homepage = "https://github.com/Muddyblack/kde-nixdatifier";
+    homepage = "https://github.com/Muddyblack/nixdatifier";
     license = lib.licenses.mit;
     platforms = lib.platforms.linux;
     mainProgram = "nixdatifier";

@@ -2,18 +2,18 @@
 .import "ProjectFunding.js" as Funding
 var name = "nixdatifier";
 var author = "Muddyblack";
-var repository = "https://github.com/Muddyblack/kde-nixdatifier";
+var repository = "https://github.com/Muddyblack/nixdatifier";
 var profile = "https://github.com/Muddyblack";
 var avatar = "https://github.com/Muddyblack.png?size=128";
 var store = "https://www.opendesktop.org/p/2360222";
 var funding = Funding.links;
 var license = "MIT License";
 var licenseId = "MIT";
-var contributorsUrl = "https://api.github.com/repos/Muddyblack/kde-nixdatifier/contributors?per_page=12";
+var contributorsUrl = "https://api.github.com/repos/Muddyblack/nixdatifier/contributors?per_page=12";
 var contributorsPage = repository + "/graphs/contributors";
 var statistics = [
-    {id: "stars", label: "GitHub stars", icon: "star.svg", href: repository + "/stargazers", url: "https://img.shields.io/github/stars/Muddyblack/kde-nixdatifier.json"},
-    {id: "downloads", label: "GitHub downloads", icon: "download.svg", href: repository + "/releases", url: "https://img.shields.io/github/downloads/Muddyblack/kde-nixdatifier/total.json"},
+    {id: "stars", label: "GitHub stars", icon: "star.svg", href: repository + "/stargazers", url: "https://img.shields.io/github/stars/Muddyblack/nixdatifier.json"},
+    {id: "downloads", label: "GitHub downloads", icon: "download.svg", href: repository + "/releases", url: "https://img.shields.io/github/downloads/Muddyblack/nixdatifier/total.json"},
     {id: "kde", label: "OpenDesktop downloads", icon: "download.svg", href: store, url: "https://img.shields.io/badge/dynamic/json.json?url=" + encodeURIComponent("https://api.pling.com/ocs/v1/content/data/?format=json&user=Muddyblack&pagesize=20&sortmode=alpha&search=nixdatifier") + "&query=" + encodeURIComponent("$.data[0].downloads") + "&label=Downloads"}
 ];
 function count(text) {
@@ -43,7 +43,7 @@ function contributors(text) {
 }
 
 var currentVersion = "2.0.3";
-var latestReleaseUrl = "https://api.github.com/repos/Muddyblack/kde-nixdatifier/releases/latest";
+var latestReleaseUrl = "https://api.github.com/repos/Muddyblack/nixdatifier/releases/latest";
 var releasesPage = repository + "/releases";
 
 function parseVersion(value) {

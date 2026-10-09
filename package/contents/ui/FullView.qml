@@ -394,7 +394,7 @@ Pane {
                             }
                             MenuItem {
                                 text: qsTr("GitHub Repository")
-                                onTriggered: Qt.openUrlExternally("https://github.com/Muddyblack/kde-nixdatifier")
+                                onTriggered: Qt.openUrlExternally("https://github.com/Muddyblack/nixdatifier")
                             }
                         }
                     }

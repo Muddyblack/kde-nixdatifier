@@ -117,7 +117,7 @@
       apps = forAllSystems (system:
         let pkgs = pkgsFor system; in
         {
-          # `nix run github:Muddyblack/kde-nixdatifier`
+          # `nix run github:Muddyblack/nixdatifier`
           default = self.apps.${system}.nixdatifier;
           nixdatifier = {
             type = "app";

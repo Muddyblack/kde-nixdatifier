@@ -16,8 +16,8 @@
   <a href="https://store.kde.org/p/2360222/">
     <img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.pling.com%2Focs%2Fv1%2Fcontent%2Fdata%3Fsearch%3Dnixdatifier%26format%3Djson&query=%24.data%5B0%5D.downloads&label=Downloads&style=for-the-badge&color=1d99f3&logo=kde&logoColor=white" alt="KDE Store Downloads" />
   </a>
-  <a href="https://github.com/Muddyblack/kde-nixdatifier/releases">
-    <img src="https://img.shields.io/github/downloads/Muddyblack/kde-nixdatifier/total?style=for-the-badge&logo=github&logoColor=white&label=GitHub%20Downloads&color=blue" alt="GitHub Downloads" />
+  <a href="https://github.com/Muddyblack/nixdatifier/releases">
+    <img src="https://img.shields.io/github/downloads/Muddyblack/nixdatifier/total?style=for-the-badge&logo=github&logoColor=white&label=GitHub%20Downloads&color=blue" alt="GitHub Downloads" />
   </a>
   <img src="https://img.shields.io/badge/Started-May_2026-9c27b0?style=for-the-badge" alt="Project started May 2026" />
 </p>
@@ -86,7 +86,7 @@ All three hosts share one QML application (`package/contents/ui/Engine.qml` and 
 A normal window plus a tray icon. Closing the window hides it to the tray, and left-clicking the tray icon shows or hides it. The icon shows the pending-update count and spins while Nixdatifier is working.
 
 ```bash
-nix run github:Muddyblack/kde-nixdatifier   # try it without installing
+nix run github:Muddyblack/nixdatifier   # try it without installing
 nixdatifier --autostart                      # start at login (writes ~/.config/autostart)
 ```
 
@@ -251,13 +251,13 @@ Run `make help` for all targets. `make test` runs the QML and helper tests in is
 Try it immediately without installing:
 
 ```bash
-nix run github:Muddyblack/kde-nixdatifier
+nix run github:Muddyblack/nixdatifier
 ```
 
 Install into your Nix profile:
 
 ```bash
-nix profile install github:Muddyblack/kde-nixdatifier
+nix profile install github:Muddyblack/nixdatifier
 nixdatifier --autostart # registers autostart entry to run in tray at login
 ```
 
@@ -266,7 +266,7 @@ nixdatifier --autostart # registers autostart entry to run in tray at login
 ```nix
 # flake.nix
 {
-  inputs.nixdatifier.url = "github:Muddyblack/kde-nixdatifier";
+  inputs.nixdatifier.url = "github:Muddyblack/nixdatifier";
 
   outputs = { self, nixpkgs, nixdatifier, ... }: {
     nixosConfigurations.mybox = nixpkgs.lib.nixosSystem {
@@ -293,7 +293,7 @@ Or install specific packages directly via `environment.systemPackages`:
 
 ```nix
 {
-  inputs.nixdatifier.url = "github:Muddyblack/kde-nixdatifier";
+  inputs.nixdatifier.url = "github:Muddyblack/nixdatifier";
 
   # In your home-manager configuration:
   imports = [ nixdatifier.homeManagerModules.default ];
@@ -320,8 +320,8 @@ non-NixOS installation.
 ### Manual install for Plasma 6 (any distro)
 
 ```bash
-git clone https://github.com/Muddyblack/kde-nixdatifier.git
-cd kde-nixdatifier
+git clone https://github.com/Muddyblack/nixdatifier.git
+cd nixdatifier
 kpackagetool6 -t Plasma/Applet -i package
 # or, to update an existing install:
 kpackagetool6 -t Plasma/Applet -u package

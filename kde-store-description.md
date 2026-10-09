@@ -3,7 +3,7 @@
 **Nixdatifier** is a panel widget made for NixOS. It shows your system generations, what changed between them, pending flake updates, secrets, dev environments (direnv and flakes), and Nix store usage, and lets you roll back or clean up without opening a terminal.
 Inspired by Apdatifier.
 
-Not using Plasma? The same app also runs as a standalone tray app on GNOME, COSMIC, Sway, XFCE and others (`nix run github:Muddyblack/kde-nixdatifier`). See GitHub.
+Not using Plasma? The same app also runs as a standalone tray app on GNOME, COSMIC, Sway, XFCE and others (`nix run github:Muddyblack/nixdatifier`). See GitHub.
 
 ---
 
@@ -60,7 +60,7 @@ The flake package also puts every helper dependency on the widget's `PATH`:
 ```nix
 # flake.nix
 {
-  inputs.nixdatifier.url = "github:Muddyblack/kde-nixdatifier";
+  inputs.nixdatifier.url = "github:Muddyblack/nixdatifier";
 
   outputs = { self, nixpkgs, nixdatifier, ... }: {
     nixosConfigurations.mybox = nixpkgs.lib.nixosSystem {
@@ -78,9 +78,9 @@ The flake package also puts every helper dependency on the widget's `PATH`:
 
 #### 3. Manual
 ```bash
-git clone https://github.com/Muddyblack/kde-nixdatifier.git
-cd kde-nixdatifier
+git clone https://github.com/Muddyblack/nixdatifier.git
+cd nixdatifier
 kpackagetool6 -t Plasma/Applet -i package
 ```
 
-Source, issues, and the full settings reference: https://github.com/Muddyblack/kde-nixdatifier
+Source, issues, and the full settings reference: https://github.com/Muddyblack/nixdatifier
